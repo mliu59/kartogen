@@ -1,0 +1,442 @@
+# =========================================================================
+# Worldgen parameters — terrain generation pipeline.
+#
+# Kept separate from default.toml so the world-generation tuning surface
+# (elevation, climate, hydrology, crops, resources, biome thresholds) can
+# be swapped or experimented with without touching simulation-engine config.
+# Loaded automatically alongside default.toml by `SimConfig.from_toml`.
+#
+# Layered pipeline (each layer is a pure function of earlier layers' outputs
+# plus a seeded child-RNG keyed by the layer name — adding a new layer or
+# entry does not reshuffle existing seeds):
+#   L1 elevation → L2 sea → L3 climate → L4 precip → L5 hydrology →
+#   L6 biome → L7 resources & crops
+#
+# Physical-unit scaling: scale-dependent parameters are stored in physical
+# units (km, km², mm) and converted via `hex_size_km` — the same physical
+# world looks identical at any chosen hex resolution.
+# =========================================================================
+
+[worldgen]
+# Each hex represents a piece of land of this physical size.
+# Scale-dependent parameters below (wavelengths, ocean pickup, river
+# threshold, etc.) are given in physical units and converted to hex units
+# at runtime — so changing hex_size_km automatically rescales noise
+# frequencies, river thresholds, wind reach, and precipitation rates.
+# Generated worlds will look the same at any chosen resolution.
+hex_size_km = 5.0
+
+[worldgen.elevation]
+# fBm + ridged noise heightmap, with radial falloff for an island world.
+# Sea level is chosen by quantile so a target fraction of hexes is land.
+land_fraction = 0.55              # target fraction of hexes that are land
+feature_wavelength_km = 250.0     # dominant elevation feature length scale
+noise_octaves = 6
+noise_lacunarity = 2.0
+noise_persistence = 0.5
+warp_strength_km = 25.0           # domain-warp magnitude in km
+warp_wavelength_km = 333.0        # wavelength of the warp field in km
+ridge_octaves = 5
+ridge_amplitude = 0.85             # how much ridges contribute to elevation
+ridge_threshold = 0.10             # ridges only above this base-elevation quantile
+falloff_strength = 0.55            # radial falloff: edges trend to ocean
+falloff_power = 2.2
+falloff_inner_fraction = 0.45      # fraction of radius before falloff begins
+
+[worldgen.climate]
+# Latitude → temperature, then lapse rate by elevation.
+# Latitude is taken as r-coordinate / radius (range [-1, 1]).
+equator_temp_c = 28.0
+polar_temp_c = -22.0
+lapse_rate_c_per_km = 6.5
+max_elevation_km = 4.5             # elevation=1.0 corresponds to this many km above sea level
+temp_noise_amplitude = 1.5         # small regional variation, °C
+
+# Precipitation pipeline: prevailing winds sweep moisture from upwind ocean
+# to land, losing moisture per km of land fetch and depositing extra on
+# uphill (orographic uplift).
+precip_base = 1600.0               # mm/year (baseline floor over land = 0.10 * this)
+precip_pickup_per_ocean_km = 120.0 # mm of moisture absorbed per km of warm ocean fetch
+precip_loss_per_km = 0.066         # fractional deposition rate per km of land traversal
+precip_orographic_coef = 3500.0    # mm per unit dh/dx uphill
+precip_noise_amplitude = 180.0
+wind_reach_km = 1000.0             # cap on upwind path length integrated per hex
+# Wind pattern: 3 latitude bands per hemisphere (trade easterlies → westerlies
+# → polar easterlies). Wind vectors are in axial-space, normalized.
+
+# -------------------------------------------------------------------------
+# Crops — agricultural suitability envelopes (FAO Ecocrop-style).
+#
+# Each crop has trapezoidal tolerance over temperature (°C) and annual
+# precipitation (mm). Suitability is the product of trapezoid scores ×
+# biome multiplier × (1 + river/coast bonuses). Biomes not listed → 0.
+#
+# Temperature points: temp_abs_min ≤ temp_opt_min ≤ temp_opt_max ≤ temp_abs_max
+# Same shape for precipitation.
+#
+# - irrigation_replaces_rain_mm: if > 0, river-adjacent hexes get this many
+#   mm added to their effective rainfall, enabling crops like rice in
+#   otherwise-dry tropical valleys.
+# -------------------------------------------------------------------------
+
+[worldgen.crops.wheat]
+temp_abs_min = 0.0
+temp_opt_min = 15.0
+temp_opt_max = 20.0
+temp_abs_max = 30.0
+precip_abs_min = 250.0
+precip_opt_min = 500.0
+precip_opt_max = 900.0
+precip_abs_max = 1600.0
+elev_max = 0.50
+river_bonus = 0.15
+river_adjacent_bonus = 0.05
+coast_bonus = 0.0
+irrigation_replaces_rain_mm = 0.0
+[worldgen.crops.wheat.biome_compatibility]
+plains = 1.0
+grassland = 1.0
+hills = 0.85
+savanna = 0.55
+temperate_forest = 0.45
+taiga = 0.20
+desert = 0.10
+
+[worldgen.crops.rice]
+temp_abs_min = 10.0
+temp_opt_min = 22.0
+temp_opt_max = 30.0
+temp_abs_max = 38.0
+precip_abs_min = 700.0
+precip_opt_min = 1200.0
+precip_opt_max = 2500.0
+precip_abs_max = 4500.0
+elev_max = 0.40
+river_bonus = 0.50
+river_adjacent_bonus = 0.30
+coast_bonus = 0.10
+irrigation_replaces_rain_mm = 800.0  # paddy effectively replaces rainfall
+[worldgen.crops.rice.biome_compatibility]
+river = 1.0
+plains = 1.0
+jungle = 0.80
+savanna = 0.40
+grassland = 0.30
+temperate_forest = 0.30
+coast = 0.40
+
+[worldgen.crops.maize]
+temp_abs_min = 8.0
+temp_opt_min = 18.0
+temp_opt_max = 27.0
+temp_abs_max = 35.0
+precip_abs_min = 400.0
+precip_opt_min = 600.0
+precip_opt_max = 1200.0
+precip_abs_max = 1800.0
+elev_max = 0.55
+river_bonus = 0.10
+river_adjacent_bonus = 0.05
+coast_bonus = 0.0
+irrigation_replaces_rain_mm = 0.0
+[worldgen.crops.maize.biome_compatibility]
+plains = 1.0
+savanna = 0.95
+hills = 0.80
+grassland = 0.85
+temperate_forest = 0.55
+jungle = 0.40
+
+[worldgen.crops.barley]
+temp_abs_min = -2.0
+temp_opt_min = 10.0
+temp_opt_max = 18.0
+temp_abs_max = 28.0
+precip_abs_min = 200.0
+precip_opt_min = 400.0
+precip_opt_max = 700.0
+precip_abs_max = 1200.0
+elev_max = 0.70
+river_bonus = 0.10
+river_adjacent_bonus = 0.05
+coast_bonus = 0.0
+irrigation_replaces_rain_mm = 0.0
+[worldgen.crops.barley.biome_compatibility]
+plains = 0.95
+grassland = 1.0
+hills = 1.0
+taiga = 0.55
+tundra = 0.10
+savanna = 0.55
+temperate_forest = 0.45
+desert = 0.15
+
+[worldgen.crops.millet]
+temp_abs_min = 12.0
+temp_opt_min = 22.0
+temp_opt_max = 32.0
+temp_abs_max = 42.0
+precip_abs_min = 150.0
+precip_opt_min = 350.0
+precip_opt_max = 800.0
+precip_abs_max = 1400.0
+elev_max = 0.45
+river_bonus = 0.10
+river_adjacent_bonus = 0.05
+coast_bonus = 0.0
+irrigation_replaces_rain_mm = 0.0
+[worldgen.crops.millet.biome_compatibility]
+savanna = 1.0
+grassland = 0.90
+plains = 0.80
+desert = 0.40
+hills = 0.55
+
+[worldgen.crops.cotton]
+temp_abs_min = 12.0
+temp_opt_min = 21.0
+temp_opt_max = 30.0
+temp_abs_max = 38.0
+precip_abs_min = 300.0
+precip_opt_min = 700.0
+precip_opt_max = 1300.0
+precip_abs_max = 1800.0
+elev_max = 0.35
+river_bonus = 0.40
+river_adjacent_bonus = 0.20
+coast_bonus = 0.0
+irrigation_replaces_rain_mm = 400.0  # heavily irrigated historically
+[worldgen.crops.cotton.biome_compatibility]
+plains = 1.0
+savanna = 0.70
+grassland = 0.60
+hills = 0.40
+jungle = 0.30
+river = 1.0
+
+[worldgen.crops.olive]
+temp_abs_min = -5.0
+temp_opt_min = 15.0
+temp_opt_max = 22.0
+temp_abs_max = 35.0
+precip_abs_min = 300.0
+precip_opt_min = 500.0
+precip_opt_max = 800.0
+precip_abs_max = 1200.0
+elev_max = 0.30
+river_bonus = 0.0
+river_adjacent_bonus = 0.0
+coast_bonus = 0.30
+irrigation_replaces_rain_mm = 0.0
+[worldgen.crops.olive.biome_compatibility]
+hills = 1.0
+plains = 0.70
+mountain = 0.30
+coast = 1.0
+grassland = 0.60
+savanna = 0.40
+
+[worldgen.crops.potato]
+temp_abs_min = 2.0
+temp_opt_min = 14.0
+temp_opt_max = 22.0
+temp_abs_max = 30.0
+precip_abs_min = 350.0
+precip_opt_min = 500.0
+precip_opt_max = 900.0
+precip_abs_max = 1500.0
+elev_max = 0.90  # Andean cultivation tolerates very high elevation
+river_bonus = 0.05
+river_adjacent_bonus = 0.05
+coast_bonus = 0.0
+irrigation_replaces_rain_mm = 0.0
+[worldgen.crops.potato.biome_compatibility]
+hills = 1.0
+mountain = 0.70
+plains = 0.65
+grassland = 0.70
+taiga = 0.50
+tundra = 0.15
+temperate_forest = 0.55
+
+# -------------------------------------------------------------------------
+# Resource deposits — natural resources distributed by per-resource Perlin
+# noise gated by biome / elevation / climate.
+#
+# feature_wavelength_km — district size; coal ~250 km, salt ~50 km.
+# abundance              — fraction of *eligible* tiles that host a deposit.
+# mean_quantity          — average deposit yield (abstract units).
+# elevation_quantity_bonus — multiplier added to quantity per unit elevation.
+# category               — informational tag ("ore" / "fuel" / "evaporite" /
+#                          "building" / "sedimentary" / "timber").
+#
+# Climate gates default to (-inf, inf) — set them only where the resource
+# genuinely needs hot/dry/cool conditions (e.g. salt evaporites).
+# -------------------------------------------------------------------------
+
+[worldgen.resources.iron]
+host_biomes = ["mountain", "hills", "plains"]
+min_elevation = 0.02
+max_elevation = 1.0
+min_temperature_c = -40.0
+max_temperature_c = 50.0
+min_precipitation_mm = 0.0
+max_precipitation_mm = 10000.0
+feature_wavelength_km = 120.0
+abundance = 0.08
+mean_quantity = 4.0
+elevation_quantity_bonus = 1.0
+category = "ore"
+
+[worldgen.resources.copper]
+host_biomes = ["mountain", "hills"]
+min_elevation = 0.05
+max_elevation = 1.0
+min_temperature_c = -40.0
+max_temperature_c = 50.0
+min_precipitation_mm = 0.0
+max_precipitation_mm = 10000.0
+feature_wavelength_km = 150.0
+abundance = 0.06
+mean_quantity = 3.0
+elevation_quantity_bonus = 1.2
+category = "ore"
+
+[worldgen.resources.tin]
+host_biomes = ["mountain", "hills"]
+min_elevation = 0.05
+max_elevation = 1.0
+min_temperature_c = -40.0
+max_temperature_c = 50.0
+min_precipitation_mm = 0.0
+max_precipitation_mm = 10000.0
+feature_wavelength_km = 80.0
+abundance = 0.02
+mean_quantity = 2.0
+elevation_quantity_bonus = 0.8
+category = "ore"
+
+[worldgen.resources.gold]
+host_biomes = ["mountain", "hills", "river"]
+min_elevation = 0.0
+max_elevation = 1.0
+min_temperature_c = -40.0
+max_temperature_c = 50.0
+min_precipitation_mm = 0.0
+max_precipitation_mm = 10000.0
+feature_wavelength_km = 70.0
+abundance = 0.03
+mean_quantity = 1.5
+elevation_quantity_bonus = 0.5
+category = "ore"
+
+[worldgen.resources.coal]
+host_biomes = ["plains", "hills", "temperate_forest", "taiga"]
+min_elevation = 0.0
+max_elevation = 0.40
+min_temperature_c = -40.0
+max_temperature_c = 50.0
+min_precipitation_mm = 0.0
+max_precipitation_mm = 10000.0
+feature_wavelength_km = 250.0
+abundance = 0.10
+mean_quantity = 5.0
+elevation_quantity_bonus = 0.0
+category = "fuel"
+
+[worldgen.resources.salt]
+host_biomes = ["desert", "coast", "plains"]
+min_elevation = 0.0
+max_elevation = 0.30
+min_temperature_c = 0.0
+max_temperature_c = 50.0
+min_precipitation_mm = 0.0
+max_precipitation_mm = 600.0   # evaporites only in arid climates
+feature_wavelength_km = 50.0
+abundance = 0.15
+mean_quantity = 2.5
+elevation_quantity_bonus = 0.0
+category = "evaporite"
+
+[worldgen.resources.stone]
+host_biomes = ["mountain", "hills"]
+min_elevation = 0.02
+max_elevation = 1.0
+min_temperature_c = -40.0
+max_temperature_c = 50.0
+min_precipitation_mm = 0.0
+max_precipitation_mm = 10000.0
+feature_wavelength_km = 60.0
+abundance = 0.45
+mean_quantity = 2.5
+elevation_quantity_bonus = 0.6
+category = "building"
+
+[worldgen.resources.clay]
+host_biomes = ["river", "plains", "lake"]
+min_elevation = 0.0
+max_elevation = 0.25
+min_temperature_c = -40.0
+max_temperature_c = 50.0
+min_precipitation_mm = 200.0
+max_precipitation_mm = 10000.0
+feature_wavelength_km = 30.0
+abundance = 0.30
+mean_quantity = 1.5
+elevation_quantity_bonus = 0.0
+category = "sedimentary"
+
+[worldgen.resources.timber_softwood]
+host_biomes = ["taiga"]
+min_elevation = 0.0
+max_elevation = 0.75
+min_temperature_c = -40.0
+max_temperature_c = 18.0
+min_precipitation_mm = 0.0
+max_precipitation_mm = 10000.0
+feature_wavelength_km = 80.0
+abundance = 0.85   # essentially every taiga hex has softwood timber
+mean_quantity = 4.0
+elevation_quantity_bonus = 0.0
+category = "timber"
+
+[worldgen.resources.timber_hardwood]
+host_biomes = ["temperate_forest", "jungle"]
+min_elevation = 0.0
+max_elevation = 0.55
+min_temperature_c = -40.0
+max_temperature_c = 50.0
+min_precipitation_mm = 0.0
+max_precipitation_mm = 10000.0
+feature_wavelength_km = 80.0
+abundance = 0.80
+mean_quantity = 4.5
+elevation_quantity_bonus = 0.0
+category = "timber"
+
+[worldgen.hydrology]
+# Sink-fill + D6 flow accumulation. Rivers carve where accumulated drainage
+# exceeds the threshold. Lakes form where sinks were filled.
+river_drainage_threshold_km2 = 1300.0  # min upstream drainage area to mark as river
+lake_min_depth = 0.03                  # min fill depth to be a lake (else marsh)
+river_carve_amount = 0.04              # how much rivers lower elevation visually
+
+[worldgen.biome]
+# Whittaker classification rules at sea-level temperature.
+# Elevation overrides apply above the thresholds below.
+elevation_hills_threshold = 0.78     # base-elev quantile above which a tile becomes hills
+elevation_mountain_threshold = 0.90
+elevation_snow_threshold = 0.94
+# Temperature thresholds (°C) for biome bands:
+tundra_max_temp_c = -2.0
+taiga_max_temp_c = 8.0
+temperate_max_temp_c = 22.0
+# Precipitation thresholds (mm/yr) — used together with temperature to assign biome:
+desert_max_precip = 200.0
+grassland_max_precip = 600.0
+forest_max_precip = 1200.0
+# Threshold below which a cool-band hex is tundra rather than taiga (separate
+# from desert_max_precip so cool zones can be sparsely wooded at modest precip):
+cool_band_dry_threshold = 150.0
+# Above forest_max_precip → jungle (in warm zones) or temperate_forest (in cool zones)
+
