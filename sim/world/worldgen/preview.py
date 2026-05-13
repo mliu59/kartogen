@@ -16,6 +16,9 @@ Layers:
     precipitation   Precipitation, tan-dry-to-darkgreen-wet.
     flow            Log-scaled flow accumulation (drainage map).
     composite       Biome with hillshade + river overlay.
+    plates          Each tectonic plate colored uniquely; oceanic plates
+                    drawn cooler/darker than continental ones, plate
+                    boundaries outlined. Requires ``mask_mode = "plates"``.
     crop:<name>     Per-hex suitability heatmap for one crop (e.g. crop:wheat).
     resource:<name> Per-hex deposit map for one resource, drawn over a faded
                     biome background (e.g. resource:iron).
@@ -159,6 +162,48 @@ def _color_suitability(score: float) -> tuple[int, int, int]:
     return (int(210 - 130 * s), int(200 + 40 * s), int(70 - 30 * s))
 
 
+# Distinct, perceptually-spaced colors for plate IDs. Chosen to read well on
+# the dark map background and to make adjacent plates easy to tell apart.
+# Plate IDs > len(palette) cycle through with a deterministic hue shift so
+# the same plate id always renders the same color across runs.
+_PLATE_PALETTE: tuple[tuple[int, int, int], ...] = (
+    (220,  90,  90),  # red
+    ( 90, 160, 220),  # sky blue
+    (220, 200,  90),  # gold
+    (140, 200, 100),  # leaf green
+    (200, 110, 200),  # magenta
+    (110, 210, 200),  # teal
+    (240, 160,  80),  # amber
+    (170, 130, 220),  # lavender
+    (230, 130, 160),  # pink
+    ( 90, 220, 140),  # mint
+    (180, 180, 200),  # cool grey
+    (210, 100,  60),  # rust
+    (130, 170, 240),  # cornflower
+    (220, 220, 130),  # pale yellow
+)
+
+
+def _plate_color(
+    plate_id: int, is_oceanic: bool,
+) -> tuple[int, int, int]:
+    """Color for a plate. Oceanic plates are darkened + slightly blue-shifted
+    so the continental / oceanic distinction is visible at a glance."""
+    base = _PLATE_PALETTE[plate_id % len(_PLATE_PALETTE)]
+    # Deterministic shift per palette cycle so plates 0 and 14 don't collide.
+    cycle = plate_id // len(_PLATE_PALETTE)
+    shift = (cycle * 23) % 60  # within ±30 of base
+    r = max(0, min(255, base[0] + shift - 30))
+    g = max(0, min(255, base[1] - shift + 30))
+    b = max(0, min(255, base[2] + (shift // 2)))
+    if is_oceanic:
+        # Dim and pull toward blue.
+        r = int(r * 0.45)
+        g = int(g * 0.55)
+        b = int(b * 0.70 + 40)
+    return (r, g, b)
+
+
 # Visual style per resource category for the multi-resource overlay.
 _CATEGORY_COLORS: dict[str, tuple[int, int, int]] = {
     "ore":         (180, 90, 50),    # rust orange
@@ -213,6 +258,8 @@ def render(
         return _render_resource(gen, resource_name, hex_px, show_legend)
     if layer == "resources":
         return _render_all_resources(gen, hex_px, show_legend)
+    if layer == "plates":
+        return _render_plates(gen, hex_px, show_legend)
 
     for hex, data in gen.hexes.items():
         px, py = _hex_to_pixel(hex.q, hex.r, hex_px, cx, cy)
@@ -223,12 +270,12 @@ def render(
         elif layer == "elevation":
             color = _color_elevation(data.elevation, sea_level=0.0)
         elif layer == "temperature":
-            if data.is_ocean:
-                # Slightly muted ocean tint so latitudinal gradient over land is clearer.
-                t = _color_temperature(data.temperature_c)
-                color = (int(t[0] * 0.55), int(t[1] * 0.55), int(t[2] * 0.75))
-            else:
-                color = _color_temperature(data.temperature_c)
+            # Same colormap for land and ocean — muting ocean produced
+            # visually sharp discontinuities along coastlines and rift
+            # valleys that read like data errors. The latitudinal gradient
+            # is already legible because ocean and land share the same
+            # temperature field.
+            color = _color_temperature(data.temperature_c)
         elif layer == "precipitation":
             if data.is_ocean:
                 color = BIOME_COLORS["ocean"]
@@ -396,6 +443,102 @@ def _render_all_resources(
             yy = h - 12 - 16 * (len(layer_order) - i)
             draw.ellipse([10, yy, 22, yy + 12], fill=color)
             draw.text((28, yy - 1), cat, fill=(220, 220, 220), font=font)
+    return img
+
+
+def _render_plates(
+    gen: GeneratedWorld,
+    hex_px: float,
+    show_legend: bool,
+) -> Image.Image:
+    """Color each hex by its plate id; oceanic plates darkened/blue-shifted.
+
+    Plate boundary hexes get a darker outline so plate edges read clearly.
+    The plate seed hex for each plate is marked with a small white dot.
+    """
+    w, h, cx, cy = _figure_size(gen.radius, hex_px)
+    img = Image.new("RGB", (w, h), color=(20, 20, 30))
+    draw = ImageDraw.Draw(img)
+
+    if gen.plates is None:
+        # Plates weren't generated for this world — produce an explanatory
+        # tile rather than silently rendering an empty image.
+        try:
+            font = ImageFont.truetype("arial.ttf", 12)
+        except OSError:
+            font = ImageFont.load_default()
+        draw.text(
+            (10, 10),
+            "Plates layer not generated for this world.\n"
+            "Set `mask_mode = \"plates\"` in [worldgen.elevation] to enable.",
+            fill=(230, 200, 120), font=font,
+        )
+        return img
+
+    field = gen.plates
+    plate_by_id = {p.id: p for p in field.plates}
+
+    for hex, data in gen.hexes.items():
+        px, py = _hex_to_pixel(hex.q, hex.r, hex_px, cx, cy)
+        corners = _hex_corners(px, py, hex_px)
+        pid = field.hex_to_plate[hex]
+        plate = plate_by_id[pid]
+        is_oceanic = plate.type == "oceanic"
+        color = _plate_color(pid, is_oceanic)
+        # Boundary hexes get a darker outline; interior hexes have no outline
+        # so plate interiors read as solid color blocks.
+        on_boundary = field.distance_to_boundary_km[hex] == 0.0
+        if on_boundary:
+            outline = (15, 15, 20)
+            width = max(1, int(hex_px / 6))
+        else:
+            outline = None  # type: ignore[assignment]
+            width = 0
+        draw.polygon(corners, fill=color, outline=outline, width=width)
+
+    # Mark each plate's seed hex with a small contrasting dot.
+    for plate in field.plates:
+        if plate.seed_hex not in gen.hexes:
+            continue
+        px, py = _hex_to_pixel(
+            plate.seed_hex.q, plate.seed_hex.r, hex_px, cx, cy,
+        )
+        r = max(2.0, hex_px * 0.35)
+        draw.ellipse(
+            [(px - r, py - r), (px + r, py + r)],
+            fill=(245, 245, 245), outline=(20, 20, 20),
+        )
+
+    if show_legend:
+        try:
+            font = ImageFont.truetype("arial.ttf", 11)
+        except OSError:
+            font = ImageFont.load_default()
+        n_continental = sum(1 for p in field.plates if p.type == "continental")
+        n_oceanic = sum(1 for p in field.plates if p.type == "oceanic")
+        caption = (
+            f"plates: {len(field.plates)}   "
+            f"continental: {n_continental}   oceanic: {n_oceanic}   "
+            f"(seeds = white dots, boundaries outlined)"
+        )
+        draw.text((10, 10), caption, fill=(230, 230, 230), font=font)
+
+        # Per-plate id swatches stacked along the bottom-left so the user can
+        # match the colors on the map to a numeric id.
+        swatch = 14
+        gap = 2
+        col_h = (swatch + gap) * len(field.plates)
+        y0 = h - 10 - col_h
+        for i, plate in enumerate(field.plates):
+            yy = y0 + i * (swatch + gap)
+            sw_color = _plate_color(plate.id, plate.type == "oceanic")
+            draw.rectangle([10, yy, 10 + swatch, yy + swatch], fill=sw_color)
+            label = f"#{plate.id} {plate.type[:4]}"
+            draw.text(
+                (10 + swatch + 4, yy - 1), label,
+                fill=(220, 220, 220), font=font,
+            )
+
     return img
 
 

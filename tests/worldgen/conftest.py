@@ -22,7 +22,7 @@ from sim.world.worldgen.types import WorldgenConfig
 def default_worldgen_config() -> WorldgenConfig:
     """Worldgen parameters loaded from ``config/default.toml``."""
     return load_worldgen_config(
-        Path(__file__).parent.parent.parent / "config" / "default.toml"
+        Path(__file__).parent.parent.parent / "config" / "worldgen.toml"
     )
 
 

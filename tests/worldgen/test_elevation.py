@@ -1,48 +1,69 @@
-"""Tests for the elevation layer."""
+"""Tests for the elevation layer.
+
+Most invariants (determinism, land-fraction targeting) are now exercised
+through ``pipeline.generate`` so that ``mask_mode="plates"`` configs — where
+elevation depends on a separately-generated PlateField — work without
+duplicating wiring in the test. A dedicated radial-mask test still drops
+into ``elevation_layer.compute`` directly with a synthesized analytic-mode
+config.
+"""
 
 from __future__ import annotations
+
+from dataclasses import replace
 
 from sim.engine.rng import RngHierarchy
 from sim.world.hex import Hex
 from sim.world.worldgen import elevation as elevation_layer
+from sim.world.worldgen import generate
 from sim.world.worldgen.types import WorldgenConfig
 
 
 def test_elevation_deterministic(default_worldgen_config: WorldgenConfig) -> None:
     """Same seed + config produces byte-identical elevation."""
-    hexes = Hex(0, 0).spiral(8)
-    rng1 = RngHierarchy(42)
-    rng2 = RngHierarchy(42)
-    a = elevation_layer.compute(hexes, 8, default_worldgen_config, rng1)
-    b = elevation_layer.compute(hexes, 8, default_worldgen_config, rng2)
-    for h in hexes:
-        assert a.elevation[h] == b.elevation[h]
-    assert a.sea_level == b.sea_level
+    a = generate(radius=8, config=default_worldgen_config, seed=42)
+    b = generate(radius=8, config=default_worldgen_config, seed=42)
+    for h in a.hexes:
+        assert a.elevation.elevation[h] == b.elevation.elevation[h]
+    assert a.elevation.sea_level == b.elevation.sea_level
 
 
 def test_elevation_different_seeds_diverge(default_worldgen_config: WorldgenConfig) -> None:
-    hexes = Hex(0, 0).spiral(8)
-    a = elevation_layer.compute(hexes, 8, default_worldgen_config, RngHierarchy(42))
-    b = elevation_layer.compute(hexes, 8, default_worldgen_config, RngHierarchy(7))
-    diffs = sum(1 for h in hexes if a.elevation[h] != b.elevation[h])
-    assert diffs > len(hexes) * 0.95  # essentially all hexes differ
+    a = generate(radius=8, config=default_worldgen_config, seed=42)
+    b = generate(radius=8, config=default_worldgen_config, seed=7)
+    diffs = sum(
+        1 for h in a.hexes
+        if a.elevation.elevation[h] != b.elevation.elevation[h]
+    )
+    assert diffs > len(a.hexes) * 0.95
 
 
 def test_sea_level_meets_target_land_fraction(default_worldgen_config: WorldgenConfig) -> None:
-    """The quantile threshold should produce close to the configured land fraction."""
-    hexes = Hex(0, 0).spiral(20)
-    layer = elevation_layer.compute(hexes, 20, default_worldgen_config, RngHierarchy(42))
-    land = sum(1 for h in hexes if not layer.is_ocean(h))
+    """Quantile threshold should produce close to the configured land fraction."""
+    world = generate(radius=20, config=default_worldgen_config, seed=42)
+    land = sum(1 for h in world.hexes.values() if not h.is_ocean)
     target = default_worldgen_config.land_fraction
-    actual = land / len(hexes)
+    actual = land / len(world.hexes)
     assert abs(actual - target) < 0.02
 
 
-def test_radial_falloff_makes_edges_ocean(default_worldgen_config: WorldgenConfig) -> None:
-    """With radial falloff enabled, hexes near the world edge should usually be ocean."""
+def test_radial_mask_makes_edges_ocean(default_worldgen_config: WorldgenConfig) -> None:
+    """With the radial continent mask enabled, hexes near the world edge should usually be ocean."""
     radius = 20
     hexes = Hex(0, 0).spiral(radius)
-    layer = elevation_layer.compute(hexes, radius, default_worldgen_config, RngHierarchy(42))
+    # Override mask params to force the radial-only path; bypasses plates.
+    # ``land_fraction`` is set explicitly so the test is independent of the
+    # default preset (which may be tuned for nearly-all-land worlds where
+    # even the edges stay above the quantile sea level).
+    radial_config = replace(
+        default_worldgen_config,
+        land_fraction=0.55,
+        mask_mode="radial",
+        mask_strength=0.55,
+        mask_power=2.2,
+        mask_inner_fraction=0.45,
+    )
+    layer = elevation_layer.compute(hexes, radius, radial_config, RngHierarchy(42))
 
     edge_hexes = [h for h in hexes if max(abs(h.q), abs(h.r), abs(h.s)) >= radius - 1]
     ocean_edge_fraction = sum(1 for h in edge_hexes if layer.is_ocean(h)) / len(edge_hexes)

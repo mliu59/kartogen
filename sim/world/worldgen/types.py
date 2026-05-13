@@ -21,6 +21,13 @@ class HexData:
 
     ``deposits`` maps resource name → deposit quantity (abstract units; relative
     only). Empty if no deposit at this hex.
+
+    Plate fields (``plate_id``, ``plate_type``, ``nearest_boundary_type``,
+    ``distance_to_boundary_km``) are populated when ``mask_mode == "plates"``
+    and ``None`` otherwise. ``nearest_boundary_type`` is one of
+    ``"cc_convergent"``, ``"oc_convergent"``, ``"oo_convergent"``,
+    ``"divergent"``, ``"transform"`` — or ``None`` if no boundary within the
+    falloff radius.
     """
 
     elevation: float
@@ -34,6 +41,10 @@ class HexData:
     biome: str
     crop_suitability: dict[str, float]
     deposits: dict[str, float]
+    plate_id: int | None
+    plate_type: str | None
+    nearest_boundary_type: str | None
+    distance_to_boundary_km: float | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +130,52 @@ class ResourceDefinition:
 
 
 @dataclass(frozen=True)
+class PlateConfig:
+    """Parameters for the plate-tectonics continent generator.
+
+    Static Voronoi plates (no time-simulated motion): seeds are placed by
+    rejection sampling, each plate is classified continental or oceanic, and
+    each gets a randomly-drawn motion vector. Boundary effects (mountains,
+    rifts) are applied as a function of distance to the nearest boundary and
+    the boundary's classification.
+    """
+
+    # Macro structure
+    count: int                              # number of plates
+    continental_fraction: float             # share of plates that are continental
+    min_separation_km: float                # rejection-sampling distance for seeds
+    # Plate seed positions can be biased toward the world center (>0) or pushed
+    # toward the edge (<0). 0 = uniform across all hexes. Used by presets like
+    # `island_continent` (centered) and `continental_coast` (edge-biased).
+    seed_radial_bias: float
+
+    # Boundary geometry — irregular plate edges via warped Voronoi
+    boundary_warp_strength_km: float
+    boundary_warp_wavelength_km: float
+
+    # Motion
+    motion_speed: float                     # scale on random unit motion vectors
+
+    # Elevation contributions
+    continental_baseline: float             # added to fBm everywhere on a continental plate
+    oceanic_baseline: float                 # added to fBm everywhere on an oceanic plate
+    mountain_amplitude: float               # peak boundary uplift, cc_convergent
+    coastal_range_amplitude: float          # oc_convergent
+    island_arc_amplitude: float             # oo_convergent
+    rift_depth: float                       # depression, divergent boundaries
+    boundary_falloff_km: float              # decay length of boundary effects inland
+    # Width of the soft-Voronoi blend used to compute the per-hex baseline:
+    # at a hex whose distance to its 2nd-nearest plate seed is within this
+    # many km of its distance to the nearest, baselines blend with smoothstep
+    # weights. 0 = hard step (old behavior); 100–300 km = continental-shelf
+    # style smooth transition between plates of different type.
+    baseline_blend_km: float
+    # Dot-product of relative motion onto inter-plate normal must exceed this
+    # for a boundary to be classified convergent/divergent; below = transform.
+    convergence_threshold: float
+
+
+@dataclass(frozen=True)
 class WorldgenConfig:
     """Parameters for the world generation pipeline.
 
@@ -147,9 +204,27 @@ class WorldgenConfig:
     ridge_octaves: int
     ridge_amplitude: float
     ridge_threshold: float
-    falloff_strength: float
-    falloff_power: float
-    falloff_inner_fraction: float
+    # Continent mask: shapes the macro landmass layout before quantile sea level.
+    # Modes:
+    #   "none"   — no shaping; sea level alone separates land/ocean. Combined
+    #              with a low land_fraction this produces an archipelago; with
+    #              a high land_fraction it produces a continuous landmass.
+    #   "radial" — concentric falloff toward the map edge (island continent).
+    #   "axial"  — one-sided ramp along a seed-chosen direction; the "ocean
+    #              side" is pulled down (continental coast).
+    #   "dual"   — two anchor points along a seed-chosen axis; mid-map and
+    #              edges pulled down (two-continent worlds).
+    mask_mode: str
+    mask_strength: float
+    mask_power: float
+    # Fraction-from-center (radial) or fraction-from-anchor (axial/dual) inside
+    # which no mask pull is applied.
+    mask_inner_fraction: float
+    # For mode="dual": distance from world center to each anchor, as a fraction
+    # of the cartesian world radius. Ignored by other modes.
+    mask_anchor_fraction: float
+    # Required when mask_mode == "plates"; may be None for the analytic modes.
+    plates: PlateConfig | None
 
     # Climate
     equator_temp_c: float
@@ -168,6 +243,25 @@ class WorldgenConfig:
     # Wind reach (km of upwind path traversed). Caps how far moisture can
     # travel before stopping.
     wind_reach_km: float
+    # Per-hex wind direction is base zonal (latitude band) + sea-breeze
+    # onshore component (annual mean) + Perlin jitter, all summed and
+    # renormalized. These knobs shape the deviation from pure zonal flow.
+    # Set everything to 0 to recover the original axis-aligned model.
+    wind_jitter_amplitude_deg: float       # max ± angular perturbation per hex
+    wind_jitter_wavelength_km: float       # Perlin wavelength of the jitter field
+    sea_breeze_strength: float             # weight on onshore component (0..1)
+    sea_breeze_reach_km: float             # onshore strength falls linearly to 0 here
+    # Multiple-path sampling: per target hex, run the moisture sweep
+    # `wind_path_samples` times with angles spread ±wind_path_spread_deg
+    # around the base wind direction; average the deposits.
+    wind_path_samples: int
+    wind_path_spread_deg: float
+    # Spatial smoothing of the final precipitation field. Each pass replaces
+    # each land hex's value with a weighted average of itself and its land
+    # neighbors. 0 = off; 1–3 = increasing smoothness. Helps clean up the
+    # hex-scale granularity from the moisture sweep / hex-rounding without
+    # changing the model's physical assumptions.
+    precip_smoothing_passes: int
 
     # Hydrology
     # Minimum upstream-drainage area (km²) for a hex to be marked as a river.

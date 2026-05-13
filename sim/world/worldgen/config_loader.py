@@ -13,6 +13,7 @@ from pathlib import Path
 
 from sim.world.worldgen.types import (
     CropDefinition,
+    PlateConfig,
     ResourceDefinition,
     WorldgenConfig,
 )
@@ -28,8 +29,13 @@ def load_worldgen_config(path: Path) -> WorldgenConfig:
 
 
 def parse_worldgen_config(wg: dict[str, object]) -> WorldgenConfig:
-    """Parse a pre-loaded ``[worldgen]`` table into a ``WorldgenConfig``."""
-    wg_elev = wg["elevation"]  # type: ignore[index]
+    """Parse a pre-loaded ``[worldgen]`` table into a ``WorldgenConfig``.
+
+    If ``[worldgen] preset = "<name>"`` is set, that preset's values from
+    ``[worldgen.presets.<name>]`` form the elevation-layer baseline, and any
+    keys explicitly set in ``[worldgen.elevation]`` override the preset.
+    """
+    wg_elev = _resolve_elevation_section(wg)
     wg_clim = wg["climate"]  # type: ignore[index]
     wg_hydro = wg["hydrology"]  # type: ignore[index]
     wg_biome = wg["biome"]  # type: ignore[index]
@@ -48,9 +54,12 @@ def parse_worldgen_config(wg: dict[str, object]) -> WorldgenConfig:
         ridge_octaves=wg_elev["ridge_octaves"],
         ridge_amplitude=wg_elev["ridge_amplitude"],
         ridge_threshold=wg_elev["ridge_threshold"],
-        falloff_strength=wg_elev["falloff_strength"],
-        falloff_power=wg_elev["falloff_power"],
-        falloff_inner_fraction=wg_elev["falloff_inner_fraction"],
+        mask_mode=wg_elev["mask_mode"],
+        mask_strength=wg_elev["mask_strength"],
+        mask_power=wg_elev["mask_power"],
+        mask_inner_fraction=wg_elev["mask_inner_fraction"],
+        mask_anchor_fraction=wg_elev["mask_anchor_fraction"],
+        plates=_parse_plate_config(wg_elev),
         equator_temp_c=wg_clim["equator_temp_c"],
         polar_temp_c=wg_clim["polar_temp_c"],
         lapse_rate_c_per_km=wg_clim["lapse_rate_c_per_km"],
@@ -62,6 +71,13 @@ def parse_worldgen_config(wg: dict[str, object]) -> WorldgenConfig:
         precip_orographic_coef=wg_clim["precip_orographic_coef"],
         precip_noise_amplitude=wg_clim["precip_noise_amplitude"],
         wind_reach_km=wg_clim["wind_reach_km"],
+        wind_jitter_amplitude_deg=wg_clim["wind_jitter_amplitude_deg"],
+        wind_jitter_wavelength_km=wg_clim["wind_jitter_wavelength_km"],
+        sea_breeze_strength=wg_clim["sea_breeze_strength"],
+        sea_breeze_reach_km=wg_clim["sea_breeze_reach_km"],
+        wind_path_samples=int(wg_clim["wind_path_samples"]),
+        wind_path_spread_deg=wg_clim["wind_path_spread_deg"],
+        precip_smoothing_passes=int(wg_clim["precip_smoothing_passes"]),
         river_drainage_threshold_km2=wg_hydro["river_drainage_threshold_km2"],
         lake_min_depth=wg_hydro["lake_min_depth"],
         river_carve_amount=wg_hydro["river_carve_amount"],
@@ -78,6 +94,84 @@ def parse_worldgen_config(wg: dict[str, object]) -> WorldgenConfig:
         crops=crops,
         resources=resources,
     )
+
+
+def _parse_plate_config(wg_elev: dict[str, object]) -> PlateConfig | None:
+    """Parse the ``plates`` sub-table of an elevation section.
+
+    Returns ``None`` when no ``[…elevation.plates]`` (or ``…presets.X.plates``)
+    sub-table is present. Required when ``mask_mode == "plates"``; the
+    elevation layer raises if it goes to use plates and finds ``None``.
+    """
+    raw = wg_elev.get("plates")
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise TypeError(
+            f"`plates` must be a TOML table, got {type(raw).__name__}"
+        )
+    return PlateConfig(
+        count=int(raw["count"]),  # type: ignore[arg-type]
+        continental_fraction=float(raw["continental_fraction"]),  # type: ignore[arg-type]
+        min_separation_km=float(raw["min_separation_km"]),  # type: ignore[arg-type]
+        seed_radial_bias=float(raw["seed_radial_bias"]),  # type: ignore[arg-type]
+        boundary_warp_strength_km=float(raw["boundary_warp_strength_km"]),  # type: ignore[arg-type]
+        boundary_warp_wavelength_km=float(raw["boundary_warp_wavelength_km"]),  # type: ignore[arg-type]
+        motion_speed=float(raw["motion_speed"]),  # type: ignore[arg-type]
+        continental_baseline=float(raw["continental_baseline"]),  # type: ignore[arg-type]
+        oceanic_baseline=float(raw["oceanic_baseline"]),  # type: ignore[arg-type]
+        mountain_amplitude=float(raw["mountain_amplitude"]),  # type: ignore[arg-type]
+        coastal_range_amplitude=float(raw["coastal_range_amplitude"]),  # type: ignore[arg-type]
+        island_arc_amplitude=float(raw["island_arc_amplitude"]),  # type: ignore[arg-type]
+        rift_depth=float(raw["rift_depth"]),  # type: ignore[arg-type]
+        boundary_falloff_km=float(raw["boundary_falloff_km"]),  # type: ignore[arg-type]
+        baseline_blend_km=float(raw["baseline_blend_km"]),  # type: ignore[arg-type]
+        convergence_threshold=float(raw["convergence_threshold"]),  # type: ignore[arg-type]
+    )
+
+
+def _resolve_elevation_section(wg: dict[str, object]) -> dict[str, object]:
+    """Merge ``[worldgen.elevation]`` with the selected preset.
+
+    If ``preset`` is set under ``[worldgen]``, look up
+    ``[worldgen.presets.<preset>]`` and use it as the baseline. Any keys
+    present in ``[worldgen.elevation]`` override the preset's values. Every
+    field the dataclass needs must end up in the merged dict — missing fields
+    raise at construction rather than silently defaulting (project rule).
+    """
+    elev = dict(wg.get("elevation", {}))  # type: ignore[arg-type]
+    preset_name = wg.get("preset")
+    if preset_name is None:
+        return elev
+    if not isinstance(preset_name, str):
+        raise TypeError(
+            f"[worldgen] preset must be a string, got {type(preset_name).__name__}"
+        )
+    presets = wg.get("presets", {})
+    if not isinstance(presets, dict) or preset_name not in presets:
+        available = sorted(presets.keys()) if isinstance(presets, dict) else []
+        raise KeyError(
+            f"[worldgen] preset={preset_name!r} not found in "
+            f"[worldgen.presets]. Available: {available}"
+        )
+    preset = presets[preset_name]
+    if not isinstance(preset, dict):
+        raise TypeError(
+            f"[worldgen.presets.{preset_name}] must be a table, got "
+            f"{type(preset).__name__}"
+        )
+    merged: dict[str, object] = dict(preset)
+    # Shallow merge of top-level keys, plus a one-level deep merge of the
+    # `plates` sub-table so users can override a single plate parameter
+    # without copying the entire table.
+    for k, v in elev.items():
+        if k == "plates" and isinstance(v, dict) and isinstance(merged.get("plates"), dict):
+            merged_plates = dict(merged["plates"])  # type: ignore[arg-type]
+            merged_plates.update(v)
+            merged["plates"] = merged_plates
+        else:
+            merged[k] = v
+    return merged
 
 
 def parse_crops(raw: dict[str, dict[str, object]]) -> tuple[CropDefinition, ...]:
