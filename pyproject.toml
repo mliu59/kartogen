@@ -1,26 +1,28 @@
 [project]
-name = "agent-based-macro-history-sim"
+name = "worldgen"
 version = "0.1.0"
-description = "Agent-based macro-history simulator"
+description = "Deterministic, layered hex-grid world generator (elevation, climate, hydrology, biomes, crops, resources)."
 requires-python = ">=3.11"
-dependencies = [
-    "structlog>=24.0",
-]
+dependencies = []
 
 [project.optional-dependencies]
+preview = [
+    "Pillow>=10.0",
+]
 dev = [
     "pytest>=8.0",
     "mypy>=1.10",
     "ruff>=0.4",
+    "Pillow>=10.0",
 ]
 
 [tool.setuptools.packages.find]
-include = ["sim*"]
+include = ["worldgen*"]
 
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-src = ["sim", "tests"]
+src = ["worldgen", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "TCH"]
@@ -30,7 +32,7 @@ python_version = "3.11"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
-packages = ["sim"]
+packages = ["worldgen"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

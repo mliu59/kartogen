@@ -15,10 +15,10 @@ from __future__ import annotations
 import math
 from collections import deque
 
-from sim.engine.rng import RngHierarchy
-from sim.world.hex import Hex
-from sim.world.noise import PerlinNoise2D
-from sim.world.worldgen.types import (
+from worldgen.rng import RngHierarchy
+from worldgen.hex import Hex
+from worldgen.noise import PerlinNoise2D
+from worldgen.types import (
     ClimateLayer,
     ElevationLayer,
     SeaLayer,

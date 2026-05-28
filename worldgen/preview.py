@@ -6,7 +6,7 @@ in the test suite.
 
 Usage::
 
-    python -m sim.world.worldgen.preview --seed 42 --radius 80 \\
+    python -m worldgen.preview --seed 42 --radius 80 \\
         --layer biome --out preview.png
 
 Layers:
@@ -35,13 +35,13 @@ from typing import TYPE_CHECKING
 
 from PIL import Image, ImageDraw, ImageFont
 
-from sim.world.hex import Hex
-from sim.world.worldgen import generate as run_pipeline
-from sim.world.worldgen.config_loader import load_worldgen_config
-from sim.world.worldgen.types import WorldgenConfig
+from worldgen.hex import Hex
+from worldgen import generate as run_pipeline
+from worldgen.config_loader import load_worldgen_config
+from worldgen.types import WorldgenConfig
 
 if TYPE_CHECKING:
-    from sim.world.worldgen.pipeline import GeneratedWorld
+    from worldgen.pipeline import GeneratedWorld
 
 
 # Biome palette (final terrain). Tuned to read clearly when many hexes
@@ -612,7 +612,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Render a generated world to PNG.")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--radius", type=int, default=80)
-    parser.add_argument("--config", type=Path, default=Path("config/default.toml"))
+    parser.add_argument("--config", type=Path, default=Path("config/worldgen.toml"))
     parser.add_argument("--layer", default="biome",
                         help="Layer name: biome, elevation, temperature, "
                              "precipitation, flow, composite, resources, "

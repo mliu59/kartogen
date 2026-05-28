@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sim.world.worldgen.pipeline import GeneratedWorld
+from worldgen.pipeline import GeneratedWorld
 
 
 def test_filled_elevation_is_at_least_natural(medium_world: GeneratedWorld) -> None:

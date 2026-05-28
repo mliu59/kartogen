@@ -1,14 +1,14 @@
-"""Tests for the plate-tectonics layer (`sim.world.worldgen.plates`)."""
+"""Tests for the plate-tectonics layer (`worldgen.plates`)."""
 
 from __future__ import annotations
 
 from dataclasses import replace
 
-from sim.engine.rng import RngHierarchy
-from sim.world.hex import Hex
-from sim.world.worldgen import generate
-from sim.world.worldgen import plates as plates_layer
-from sim.world.worldgen.plates import (
+from worldgen.rng import RngHierarchy
+from worldgen.hex import Hex
+from worldgen import generate
+from worldgen import plates as plates_layer
+from worldgen.plates import (
     BOUNDARY_CC_CONVERGENT,
     BOUNDARY_DIVERGENT,
     BOUNDARY_OC_CONVERGENT,
@@ -17,7 +17,7 @@ from sim.world.worldgen.plates import (
     PLATE_TYPE_CONTINENTAL,
     PLATE_TYPE_OCEANIC,
 )
-from sim.world.worldgen.types import PlateConfig, WorldgenConfig
+from worldgen.types import PlateConfig, WorldgenConfig
 
 VALID_BOUNDARIES = {
     BOUNDARY_CC_CONVERGENT,

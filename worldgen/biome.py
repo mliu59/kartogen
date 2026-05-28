@@ -3,8 +3,8 @@ elevation, coast and water overrides."""
 
 from __future__ import annotations
 
-from sim.world.hex import Hex
-from sim.world.worldgen.types import (
+from worldgen.hex import Hex
+from worldgen.types import (
     ClimateLayer,
     ElevationLayer,
     HydrologyLayer,

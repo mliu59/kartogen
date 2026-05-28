@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from sim.world.terrain import TERRAIN_NAMES
-from sim.world.worldgen import biome as biome_layer
-from sim.world.worldgen.pipeline import GeneratedWorld
-from sim.world.worldgen.types import WorldgenConfig
+from worldgen.terrain import TERRAIN_NAMES
+from worldgen import biome as biome_layer
+from worldgen.pipeline import GeneratedWorld
+from worldgen.types import WorldgenConfig
 
 
 def test_every_biome_name_is_known(small_world: GeneratedWorld) -> None:

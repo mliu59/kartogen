@@ -1,9 +1,7 @@
 """Test fixtures for the terrain generation suite.
 
-These tests are *separate* from the simulation engine tests in ``tests/`` — they
-exercise only ``sim/world/`` and import nothing from the engine, agents, or
-resolution layers. The fixture below loads the default world-gen parameters
-from ``config/default.toml`` so that tests track real config changes.
+Loads the default world-gen parameters from ``config/worldgen.toml`` so tests
+track real config changes.
 """
 
 from __future__ import annotations
@@ -12,17 +10,17 @@ from pathlib import Path
 
 import pytest
 
-from sim.world.worldgen import generate
-from sim.world.worldgen.config_loader import load_worldgen_config
-from sim.world.worldgen.pipeline import GeneratedWorld
-from sim.world.worldgen.types import WorldgenConfig
+from worldgen import generate
+from worldgen.config_loader import load_worldgen_config
+from worldgen.pipeline import GeneratedWorld
+from worldgen.types import WorldgenConfig
 
 
 @pytest.fixture(scope="session")
 def default_worldgen_config() -> WorldgenConfig:
-    """Worldgen parameters loaded from ``config/default.toml``."""
+    """Worldgen parameters loaded from ``config/worldgen.toml``."""
     return load_worldgen_config(
-        Path(__file__).parent.parent.parent / "config" / "worldgen.toml"
+        Path(__file__).parent.parent / "config" / "worldgen.toml"
     )
 
 

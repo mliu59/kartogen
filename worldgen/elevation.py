@@ -5,11 +5,11 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable
 
-from sim.engine.rng import RngHierarchy
-from sim.world.hex import Hex
-from sim.world.noise import PerlinNoise2D, fbm, ridged_fbm
-from sim.world.worldgen.plates import PlateField, plate_elevation_bias
-from sim.world.worldgen.types import ElevationLayer, WorldgenConfig
+from worldgen.rng import RngHierarchy
+from worldgen.hex import Hex
+from worldgen.noise import PerlinNoise2D, fbm, ridged_fbm
+from worldgen.plates import PlateField, plate_elevation_bias
+from worldgen.types import ElevationLayer, WorldgenConfig
 
 
 def _hex_to_xy(h: Hex) -> tuple[float, float]:

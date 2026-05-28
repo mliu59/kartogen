@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sim.world.worldgen.types import (
+from worldgen.types import (
     CropDefinition,
     PlateConfig,
     ResourceDefinition,

@@ -12,11 +12,11 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from sim.engine.rng import RngHierarchy
-from sim.world.hex import Hex
-from sim.world.worldgen import elevation as elevation_layer
-from sim.world.worldgen import generate
-from sim.world.worldgen.types import WorldgenConfig
+from worldgen.rng import RngHierarchy
+from worldgen.hex import Hex
+from worldgen import elevation as elevation_layer
+from worldgen import generate
+from worldgen.types import WorldgenConfig
 
 
 def test_elevation_deterministic(default_worldgen_config: WorldgenConfig) -> None:

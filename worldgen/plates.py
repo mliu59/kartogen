@@ -25,10 +25,10 @@ from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from sim.engine.rng import RngHierarchy
-from sim.world.hex import Hex
-from sim.world.noise import PerlinNoise2D
-from sim.world.worldgen.types import PlateConfig
+from worldgen.rng import RngHierarchy
+from worldgen.hex import Hex
+from worldgen.noise import PerlinNoise2D
+from worldgen.types import PlateConfig
 
 PLATE_TYPE_CONTINENTAL = "continental"
 PLATE_TYPE_OCEANIC = "oceanic"

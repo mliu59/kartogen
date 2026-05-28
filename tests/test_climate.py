@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import statistics
 
-from sim.world.worldgen.pipeline import GeneratedWorld
+from worldgen.pipeline import GeneratedWorld
 
 
 def test_temperature_decreases_toward_poles(medium_world: GeneratedWorld) -> None:

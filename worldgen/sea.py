@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from sim.world.hex import Hex
-from sim.world.worldgen.types import ElevationLayer, SeaLayer
+from worldgen.hex import Hex
+from worldgen.types import ElevationLayer, SeaLayer
 
 
 def compute(elevation: ElevationLayer) -> SeaLayer:

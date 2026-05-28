@@ -6,7 +6,7 @@ import random
 
 import pytest
 
-from sim.world.noise import PerlinNoise2D, fbm, ridged_fbm
+from worldgen.noise import PerlinNoise2D, fbm, ridged_fbm
 
 
 @pytest.fixture

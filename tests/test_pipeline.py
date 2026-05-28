@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from sim.world.worldgen import generate
-from sim.world.worldgen.pipeline import GeneratedWorld
-from sim.world.worldgen.types import WorldgenConfig
+from worldgen import generate
+from worldgen.pipeline import GeneratedWorld
+from worldgen.types import WorldgenConfig
 
 
 def test_pipeline_deterministic(default_worldgen_config: WorldgenConfig) -> None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from sim.world.hex import Hex
+from worldgen.hex import Hex
 
 
 @dataclass(frozen=True, slots=True)

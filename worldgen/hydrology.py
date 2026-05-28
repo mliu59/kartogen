@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import heapq
 
-from sim.world.hex import Hex
-from sim.world.worldgen.types import (
+from worldgen.hex import Hex
+from worldgen.types import (
     ElevationLayer,
     HydrologyLayer,
     SeaLayer,

@@ -4,17 +4,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sim.engine.rng import RngHierarchy
-from sim.world.hex import Hex
-from sim.world.worldgen import biome as biome_layer
-from sim.world.worldgen import climate as climate_layer
-from sim.world.worldgen import elevation as elevation_layer
-from sim.world.worldgen import hydrology as hydrology_layer
-from sim.world.worldgen import plates as plates_layer
-from sim.world.worldgen import resources as resources_layer
-from sim.world.worldgen import sea as sea_layer
-from sim.world.worldgen.plates import PlateField
-from sim.world.worldgen.types import (
+from worldgen.rng import RngHierarchy
+from worldgen.hex import Hex
+from worldgen import biome as biome_layer
+from worldgen import climate as climate_layer
+from worldgen import elevation as elevation_layer
+from worldgen import hydrology as hydrology_layer
+from worldgen import plates as plates_layer
+from worldgen import resources as resources_layer
+from worldgen import sea as sea_layer
+from worldgen.plates import PlateField
+from worldgen.types import (
     ClimateLayer,
     ElevationLayer,
     HexData,

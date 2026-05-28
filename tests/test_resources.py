@@ -10,9 +10,9 @@ Covers:
 
 from __future__ import annotations
 
-from sim.world.worldgen.pipeline import GeneratedWorld
-from sim.world.worldgen.resources import _trapezoid, crop_suitability
-from sim.world.worldgen.types import CropDefinition
+from worldgen.pipeline import GeneratedWorld
+from worldgen.resources import _trapezoid, crop_suitability
+from worldgen.types import CropDefinition
 
 
 def test_trapezoid_zero_outside_bounds() -> None:
@@ -174,7 +174,7 @@ def test_pipeline_deposit_quantities_positive(medium_world: GeneratedWorld) -> N
 
 def test_resources_deterministic(medium_world: GeneratedWorld, default_worldgen_config) -> None:  # type: ignore[no-untyped-def]
     """Two runs with the same seed produce identical deposit + crop fields."""
-    from sim.world.worldgen import generate
+    from worldgen import generate
 
     a = medium_world
     b = generate(radius=a.radius, config=default_worldgen_config, seed=42)

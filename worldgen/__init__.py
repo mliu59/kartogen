@@ -13,7 +13,7 @@ Each layer is a pure function of (prior_state, seeded_rng, config). Layers:
 The entry point is ``pipeline.generate(config, seed) -> GeneratedWorld``.
 """
 
-from sim.world.worldgen.pipeline import GeneratedWorld, generate
-from sim.world.worldgen.types import HexData, WorldgenConfig
+from worldgen.pipeline import GeneratedWorld, generate
+from worldgen.types import HexData, WorldgenConfig
 
 __all__ = ["GeneratedWorld", "HexData", "WorldgenConfig", "generate"]
