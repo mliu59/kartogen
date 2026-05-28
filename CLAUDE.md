@@ -4,7 +4,9 @@ This file is the project's memory and design contract. Read it fully before maki
 
 ## Project mission
 
-`worldgen` is a deterministic, layered hex-grid world generator: from a `(radius, config, seed)` triple it produces a `GeneratedWorld` containing per-hex elevation, sea/coast/lake/river flags, temperature, precipitation, biome, crop suitability, and resource deposits — plus the intermediate layer outputs needed for testing and rendering.
+`worldgen` is a deterministic, layered hex-grid world generator: from a `(radius, config, seed)` triple it produces a `GeneratedWorld` containing per-hex elevation, sea/coast/lake/river flags, temperature, precipitation, and biome — plus the intermediate layer outputs needed for testing and rendering.
+
+A resource-and-crops layer existed previously (FAO-style envelopes + clustered Perlin deposits) but was removed pending a better approach.
 
 It was extracted from a larger agent-based macro-history simulator so the terrain pipeline can be developed, tested, and previewed on its own. The package has no runtime dependencies; the optional `[preview]` extra adds Pillow for PNG rendering.
 
@@ -47,7 +49,6 @@ worldgen/
 ├── climate.py         — L3+L4: temperature + precipitation (wind sweep, orographic)
 ├── hydrology.py       — L5: priority-flood + D6 flow accumulation → rivers/lakes
 ├── biome.py           — L6: Whittaker(T, P) + elevation/coast/water overrides
-├── resources.py       — L7: crop suitability + clustered deposit noise
 └── preview.py         — CLI: PNG renderer (requires Pillow)
 ```
 
@@ -66,11 +67,8 @@ seed + config
   ↓ L4  precipitation prevailing-wind moisture sweep with orographic uplift
   ↓ L5  hydrology     priority-flood + ε-tilt → D6 flow accum → rivers, lakes
   ↓ L6  biome         Whittaker(T, P) lookup + elevation/coast/water overrides
-  ↓ L7  resources     crop suitability + resource deposits
 GeneratedWorld
 ```
-
-See [docs/terrain/TERRAIN_GENERATION.md](docs/terrain/TERRAIN_GENERATION.md) for the full methods writeup and cited sources.
 
 **Physical-unit scaling.** Scale-dependent generator parameters are stored in physical units (km, km², mm/km of land fetch) and converted to per-hex units via `hex_size_km` at use time. Changing `hex_size_km` (default 5 km) automatically rescales noise frequency, wind reach, river thresholds, deposit feature wavelengths, and precipitation rates — the same physical world looks the same at any chosen hex resolution.
 
@@ -82,8 +80,6 @@ See [docs/terrain/TERRAIN_GENERATION.md](docs/terrain/TERRAIN_GENERATION.md) for
 | `temperature_c`, `precipitation_mm` | L3 + L4 |
 | `is_river`, `is_lake`, `flow_accumulation` | L5 |
 | `biome` | L6 (a name from `TERRAIN_NAMES`) |
-| `crop_suitability: dict[crop_name, float]` | L7 (FAO-style trapezoidal envelopes) |
-| `deposits: dict[resource_name, float]` | L7 (per-resource clustered Perlin) |
 | `plate_id`, `plate_type`, `nearest_boundary_type`, `distance_to_boundary_km` | L0 (or `None` when plates are off) |
 
 ## Preview CLI
@@ -93,7 +89,7 @@ python -m worldgen.preview --seed 42 --radius 80 --layer biome --out world.png
 python -m worldgen.preview --seed 42 --radius 80 --all --out out/
 ```
 
-`--all` renders every standard layer plus one PNG per crop and per resource. Requires the `[preview]` extra (Pillow).
+`--all` renders every standard layer. Requires the `[preview]` extra (Pillow).
 
 ## Conventions
 
@@ -118,7 +114,7 @@ python -m worldgen.preview --seed 42 --radius 80 --all --out out/
 - Hidden randomness outside `RngHierarchy`.
 - Magic numbers in code. Coefficients go in `config/worldgen.toml`.
 - Backwards-compat shims when changing a feature. No fallback paths, no "if not configured, do the old thing" branches.
-- Premature abstraction. Don't build a plugin system for layers; we have seven.
+- Premature abstraction. Don't build a plugin system for layers; we have a handful.
 - Premature optimization. Clarity wins for v0. Profile before tuning.
 - Layer-to-layer reaching past the explicit `pipeline.generate` wiring (e.g. importing `hydrology` from inside `climate`). New cross-layer information must flow through a typed layer output.
 

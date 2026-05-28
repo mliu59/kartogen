@@ -1,6 +1,6 @@
 # worldgen
 
-Deterministic, layered hex-grid world generator. Produces per-hex elevation, sea/coast/lake/river flags, temperature, precipitation, biomes, crop suitability, and resource deposits — all as a pure function of `(radius, config, seed)`.
+Deterministic, layered hex-grid world generator. Produces per-hex elevation, sea/coast/lake/river flags, temperature, precipitation, and biomes — all as a pure function of `(radius, config, seed)`.
 
 Extracted from a larger agent-based macro-history simulator; lives on its own so the terrain pipeline can be developed, tested, and previewed in isolation.
 
@@ -34,7 +34,7 @@ python -m worldgen.preview --seed 42 --radius 80 --layer biome --out world.png
 python -m worldgen.preview --seed 42 --radius 80 --all --out out/
 ```
 
-`--all` renders every standard layer plus one PNG per crop and per resource.
+`--all` renders every standard layer.
 
 ## Pipeline
 
@@ -47,11 +47,10 @@ seed + config
   ↓ L4  precipitation prevailing-wind moisture sweep + orographic uplift
   ↓ L5  hydrology     priority-flood → D6 flow accumulation → rivers, lakes
   ↓ L6  biome         Whittaker(T, P) + overrides
-  ↓ L7  resources     crop suitability + clustered deposit noise
 GeneratedWorld
 ```
 
-See [docs/terrain/TERRAIN_GENERATION.md](docs/terrain/TERRAIN_GENERATION.md) for the methods writeup. See [CLAUDE.md](CLAUDE.md) for the design contract.
+See [CLAUDE.md](CLAUDE.md) for the design contract.
 
 ## Test
 

@@ -12,9 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from worldgen.types import (
-    CropDefinition,
     PlateConfig,
-    ResourceDefinition,
     WorldgenConfig,
 )
 
@@ -39,8 +37,6 @@ def parse_worldgen_config(wg: dict[str, object]) -> WorldgenConfig:
     wg_clim = wg["climate"]  # type: ignore[index]
     wg_hydro = wg["hydrology"]  # type: ignore[index]
     wg_biome = wg["biome"]  # type: ignore[index]
-    crops = parse_crops(wg.get("crops", {}))  # type: ignore[union-attr,arg-type]
-    resources = parse_resources(wg.get("resources", {}))  # type: ignore[union-attr,arg-type]
 
     return WorldgenConfig(
         hex_size_km=wg["hex_size_km"],  # type: ignore[index]
@@ -91,8 +87,6 @@ def parse_worldgen_config(wg: dict[str, object]) -> WorldgenConfig:
         grassland_max_precip=wg_biome["grassland_max_precip"],
         forest_max_precip=wg_biome["forest_max_precip"],
         cool_band_dry_threshold=wg_biome["cool_band_dry_threshold"],
-        crops=crops,
-        resources=resources,
     )
 
 
@@ -172,56 +166,3 @@ def _resolve_elevation_section(wg: dict[str, object]) -> dict[str, object]:
         else:
             merged[k] = v
     return merged
-
-
-def parse_crops(raw: dict[str, dict[str, object]]) -> tuple[CropDefinition, ...]:
-    """Parse a ``[worldgen.crops.*]`` table into ``CropDefinition`` objects.
-
-    Crops are returned in name-sorted order so iteration is deterministic.
-    """
-    crops: list[CropDefinition] = []
-    for name in sorted(raw.keys()):
-        props = raw[name]
-        biome_compat = props.get("biome_compatibility", {})
-        crops.append(CropDefinition(
-            name=name,
-            temp_abs_min=float(props["temp_abs_min"]),  # type: ignore[arg-type]
-            temp_opt_min=float(props["temp_opt_min"]),  # type: ignore[arg-type]
-            temp_opt_max=float(props["temp_opt_max"]),  # type: ignore[arg-type]
-            temp_abs_max=float(props["temp_abs_max"]),  # type: ignore[arg-type]
-            precip_abs_min=float(props["precip_abs_min"]),  # type: ignore[arg-type]
-            precip_opt_min=float(props["precip_opt_min"]),  # type: ignore[arg-type]
-            precip_opt_max=float(props["precip_opt_max"]),  # type: ignore[arg-type]
-            precip_abs_max=float(props["precip_abs_max"]),  # type: ignore[arg-type]
-            elev_max=float(props["elev_max"]),  # type: ignore[arg-type]
-            biome_compatibility={k: float(v) for k, v in biome_compat.items()},  # type: ignore[union-attr]
-            river_bonus=float(props.get("river_bonus", 0.0)),  # type: ignore[arg-type]
-            river_adjacent_bonus=float(props.get("river_adjacent_bonus", 0.0)),  # type: ignore[arg-type]
-            coast_bonus=float(props.get("coast_bonus", 0.0)),  # type: ignore[arg-type]
-            irrigation_replaces_rain_mm=float(props.get("irrigation_replaces_rain_mm", 0.0)),  # type: ignore[arg-type]
-        ))
-    return tuple(crops)
-
-
-def parse_resources(raw: dict[str, dict[str, object]]) -> tuple[ResourceDefinition, ...]:
-    """Parse a ``[worldgen.resources.*]`` table into ``ResourceDefinition``s."""
-    resources: list[ResourceDefinition] = []
-    for name in sorted(raw.keys()):
-        props = raw[name]
-        host_biomes = tuple(props.get("host_biomes", ()))  # type: ignore[arg-type]
-        resources.append(ResourceDefinition(
-            name=name,
-            host_biomes=host_biomes,
-            min_elevation=float(props.get("min_elevation", 0.0)),  # type: ignore[arg-type]
-            max_elevation=float(props.get("max_elevation", 1.0)),  # type: ignore[arg-type]
-            min_temperature_c=float(props.get("min_temperature_c", -1e6)),  # type: ignore[arg-type]
-            max_temperature_c=float(props.get("max_temperature_c", 1e6)),  # type: ignore[arg-type]
-            min_precipitation_mm=float(props.get("min_precipitation_mm", 0.0)),  # type: ignore[arg-type]
-            max_precipitation_mm=float(props.get("max_precipitation_mm", 1e6)),  # type: ignore[arg-type]
-            feature_wavelength_km=float(props["feature_wavelength_km"]),  # type: ignore[arg-type]
-            abundance=float(props["abundance"]),  # type: ignore[arg-type]
-            mean_quantity=float(props["mean_quantity"]),  # type: ignore[arg-type]
-            elevation_quantity_bonus=float(props.get("elevation_quantity_bonus", 0.0)),  # type: ignore[arg-type]
-            category=str(props.get("category", "")),
-        ))
-    return tuple(resources)

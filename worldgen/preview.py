@@ -19,11 +19,6 @@ Layers:
     plates          Each tectonic plate colored uniquely; oceanic plates
                     drawn cooler/darker than continental ones, plate
                     boundaries outlined. Requires ``mask_mode = "plates"``.
-    crop:<name>     Per-hex suitability heatmap for one crop (e.g. crop:wheat).
-    resource:<name> Per-hex deposit map for one resource, drawn over a faded
-                    biome background (e.g. resource:iron).
-    resources       All resource deposits overlaid on the biome map at once,
-                    color-coded by category.
 """
 
 from __future__ import annotations
@@ -149,19 +144,6 @@ def _color_flow(flow: int, max_flow: int) -> tuple[int, int, int]:
     return (int(40 + 70 * x), int(60 + 140 * x), int(120 + 100 * x))
 
 
-def _color_suitability(score: float) -> tuple[int, int, int]:
-    """Suitability ∈ [0, 1] → dark-grey (zero) → yellow → bright green (1)."""
-    x = max(0.0, min(1.0, score))
-    if x < 0.1:
-        # Not suitable — show a uniform dark grey.
-        return (60, 60, 65)
-    if x < 0.5:
-        s = (x - 0.1) / 0.4
-        return (int(80 + 130 * s), int(70 + 130 * s), int(45 + 30 * s))
-    s = (x - 0.5) / 0.5
-    return (int(210 - 130 * s), int(200 + 40 * s), int(70 - 30 * s))
-
-
 # Distinct, perceptually-spaced colors for plate IDs. Chosen to read well on
 # the dark map background and to make adjacent plates easy to tell apart.
 # Plate IDs > len(palette) cycle through with a deterministic hue shift so
@@ -204,60 +186,19 @@ def _plate_color(
     return (r, g, b)
 
 
-# Visual style per resource category for the multi-resource overlay.
-_CATEGORY_COLORS: dict[str, tuple[int, int, int]] = {
-    "ore":         (180, 90, 50),    # rust orange
-    "fuel":        (40, 40, 40),     # near-black
-    "evaporite":   (240, 240, 230),  # off-white
-    "building":    (170, 170, 175),  # neutral grey
-    "sedimentary": (200, 130, 80),   # tan-brown
-    "timber":      (60, 130, 60),    # forest green
-}
-
-
-def _draw_deposit_dot(
-    draw: ImageDraw.ImageDraw,
-    px: float, py: float,
-    hex_px: float,
-    color: tuple[int, int, int],
-    intensity: float,
-) -> None:
-    """Draw a small circle marker for a resource deposit at hex pixel (px, py)."""
-    r = max(1.5, hex_px * (0.25 + 0.35 * min(1.0, intensity)))
-    draw.ellipse(
-        [(px - r, py - r), (px + r, py + r)],
-        fill=color, outline=(20, 20, 20),
-    )
-
-
 def render(
     gen: GeneratedWorld,
     layer: str,
     hex_px: float = 6.0,
     show_legend: bool = True,
 ) -> Image.Image:
-    """Render the given layer to a PIL Image.
-
-    Special layer names:
-      - ``crop:<name>`` heatmap of one crop's suitability.
-      - ``resource:<name>`` deposits of one resource over a faded biome map.
-      - ``resources`` all deposits at once, color-coded by category.
-    """
+    """Render the given layer to a PIL Image."""
     w, h, cx, cy = _figure_size(gen.radius, hex_px)
     img = Image.new("RGB", (w, h), color=(20, 20, 30))
     draw = ImageDraw.Draw(img)
 
     max_flow = max((d.flow_accumulation for d in gen.hexes.values()), default=1)
 
-    # Special compound layers — render base + overlays separately.
-    if layer.startswith("crop:"):
-        crop_name = layer.split(":", 1)[1]
-        return _render_crop(gen, crop_name, hex_px, show_legend)
-    if layer.startswith("resource:"):
-        resource_name = layer.split(":", 1)[1]
-        return _render_resource(gen, resource_name, hex_px, show_legend)
-    if layer == "resources":
-        return _render_all_resources(gen, hex_px, show_legend)
     if layer == "plates":
         return _render_plates(gen, hex_px, show_legend)
 
@@ -304,145 +245,6 @@ def render(
     if show_legend:
         _draw_legend(draw, layer, w, h, gen)
 
-    return img
-
-
-def _render_crop(
-    gen: GeneratedWorld,
-    crop_name: str,
-    hex_px: float,
-    show_legend: bool,
-) -> Image.Image:
-    """Render a single crop's suitability heatmap, with ocean drawn as ocean."""
-    w, h, cx, cy = _figure_size(gen.radius, hex_px)
-    img = Image.new("RGB", (w, h), color=(20, 20, 30))
-    draw = ImageDraw.Draw(img)
-
-    for hex, data in gen.hexes.items():
-        px, py = _hex_to_pixel(hex.q, hex.r, hex_px, cx, cy)
-        corners = _hex_corners(px, py, hex_px)
-        if data.is_ocean:
-            color = BIOME_COLORS["ocean"] if data.biome != "deep_ocean" else BIOME_COLORS["deep_ocean"]
-        elif data.is_lake:
-            color = BIOME_COLORS["lake"]
-        else:
-            score = data.crop_suitability.get(crop_name, 0.0)
-            color = _color_suitability(score)
-        draw.polygon(corners, fill=color)
-
-    if show_legend:
-        try:
-            font = ImageFont.truetype("arial.ttf", 11)
-        except OSError:
-            font = ImageFont.load_default()
-        n_grown = sum(1 for d in gen.hexes.values() if d.crop_suitability.get(crop_name, 0) > 0)
-        max_score = max((d.crop_suitability.get(crop_name, 0) for d in gen.hexes.values()), default=0)
-        caption = (f"crop suitability: {crop_name}   "
-                   f"viable hexes: {n_grown}   peak: {max_score:.2f}")
-        draw.text((10, 10), caption, fill=(220, 220, 220), font=font)
-    return img
-
-
-def _render_resource(
-    gen: GeneratedWorld,
-    resource_name: str,
-    hex_px: float,
-    show_legend: bool,
-) -> Image.Image:
-    """Render one resource's deposits as dots over a faded biome background."""
-    w, h, cx, cy = _figure_size(gen.radius, hex_px)
-    img = Image.new("RGB", (w, h), color=(20, 20, 30))
-    draw = ImageDraw.Draw(img)
-
-    # Faded biome background.
-    for hex, data in gen.hexes.items():
-        px, py = _hex_to_pixel(hex.q, hex.r, hex_px, cx, cy)
-        corners = _hex_corners(px, py, hex_px)
-        base = BIOME_COLORS.get(data.biome, (180, 180, 180))
-        faded = tuple(int(c * 0.45 + 40) for c in base)
-        draw.polygon(corners, fill=faded)
-
-    # Find this resource's category for marker color.
-    cat = ""
-    max_qty = 0.0
-    for r in gen.config.resources:
-        if r.name == resource_name:
-            cat = r.category
-            break
-    for d in gen.hexes.values():
-        max_qty = max(max_qty, d.deposits.get(resource_name, 0.0))
-    if max_qty == 0:
-        max_qty = 1.0
-    marker_color = _CATEGORY_COLORS.get(cat, (200, 50, 50))
-
-    # Deposit dots.
-    deposit_count = 0
-    for hex, data in gen.hexes.items():
-        q = data.deposits.get(resource_name, 0.0)
-        if q <= 0:
-            continue
-        deposit_count += 1
-        px, py = _hex_to_pixel(hex.q, hex.r, hex_px, cx, cy)
-        _draw_deposit_dot(draw, px, py, hex_px, marker_color, q / max_qty)
-
-    if show_legend:
-        try:
-            font = ImageFont.truetype("arial.ttf", 11)
-        except OSError:
-            font = ImageFont.load_default()
-        draw.text(
-            (10, 10),
-            f"resource: {resource_name} ({cat})   deposits: {deposit_count}   peak qty: {max_qty:.1f}",
-            fill=(240, 240, 240), font=font,
-        )
-    return img
-
-
-def _render_all_resources(
-    gen: GeneratedWorld,
-    hex_px: float,
-    show_legend: bool,
-) -> Image.Image:
-    """Show every resource's deposits at once, color-coded by category, on
-    a faded biome background. Useful as a single 'where can I find stuff' map.
-    """
-    w, h, cx, cy = _figure_size(gen.radius, hex_px)
-    img = Image.new("RGB", (w, h), color=(20, 20, 30))
-    draw = ImageDraw.Draw(img)
-
-    for hex, data in gen.hexes.items():
-        px, py = _hex_to_pixel(hex.q, hex.r, hex_px, cx, cy)
-        corners = _hex_corners(px, py, hex_px)
-        base = BIOME_COLORS.get(data.biome, (180, 180, 180))
-        faded = tuple(int(c * 0.40 + 35) for c in base)
-        draw.polygon(corners, fill=faded)
-
-    cat_by_name = {r.name: r.category for r in gen.config.resources}
-
-    # Sort categories so dots are drawn back-to-front consistently.
-    layer_order = ("timber", "sedimentary", "building", "evaporite", "fuel", "ore")
-    for cat in layer_order:
-        color = _CATEGORY_COLORS.get(cat, (200, 50, 50))
-        for hex, data in gen.hexes.items():
-            for res_name, qty in data.deposits.items():
-                if cat_by_name.get(res_name) != cat or qty <= 0:
-                    continue
-                px, py = _hex_to_pixel(hex.q, hex.r, hex_px, cx, cy)
-                _draw_deposit_dot(draw, px, py, hex_px, color, 0.5)
-
-    if show_legend:
-        try:
-            font = ImageFont.truetype("arial.ttf", 11)
-        except OSError:
-            font = ImageFont.load_default()
-        draw.text((10, 10), "all resource deposits (colored by category)",
-                  fill=(240, 240, 240), font=font)
-        # Category legend bottom-left.
-        for i, cat in enumerate(layer_order):
-            color = _CATEGORY_COLORS.get(cat, (200, 50, 50))
-            yy = h - 12 - 16 * (len(layer_order) - i)
-            draw.ellipse([10, yy, 22, yy + 12], fill=color)
-            draw.text((28, yy - 1), cat, fill=(220, 220, 220), font=font)
     return img
 
 
@@ -615,13 +417,11 @@ def main() -> None:
     parser.add_argument("--config", type=Path, default=Path("config/worldgen.toml"))
     parser.add_argument("--layer", default="biome",
                         help="Layer name: biome, elevation, temperature, "
-                             "precipitation, flow, composite, resources, "
-                             "crop:<name>, resource:<name>")
+                             "precipitation, flow, composite, plates")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--hex-px", type=float, default=6.0)
     parser.add_argument("--all", action="store_true",
-                        help="Render every layer; --out is treated as a directory. "
-                             "Includes one PNG per crop and one per resource.")
+                        help="Render every layer; --out is treated as a directory.")
     args = parser.parse_args()
 
     cfg = _load_worldgen_config(args.config)
@@ -631,17 +431,9 @@ def main() -> None:
         args.out.mkdir(parents=True, exist_ok=True)
         n = 0
         for layer in ("elevation", "temperature", "precipitation",
-                      "flow", "biome", "composite", "resources"):
+                      "flow", "biome", "composite"):
             img = render(gen, layer, hex_px=args.hex_px)
             img.save(args.out / f"seed{args.seed}_r{args.radius}_{layer}.png")
-            n += 1
-        for crop in cfg.crops:
-            img = render(gen, f"crop:{crop.name}", hex_px=args.hex_px)
-            img.save(args.out / f"seed{args.seed}_r{args.radius}_crop_{crop.name}.png")
-            n += 1
-        for resource in cfg.resources:
-            img = render(gen, f"resource:{resource.name}", hex_px=args.hex_px)
-            img.save(args.out / f"seed{args.seed}_r{args.radius}_resource_{resource.name}.png")
             n += 1
         print(f"Wrote {n} PNGs to {args.out}")
     else:

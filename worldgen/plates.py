@@ -14,8 +14,7 @@ The model is intentionally static — there is no time-simulated plate motion.
 Each plate gets a random motion vector at generation time, and the relative
 motion of two plates is used purely to *classify* the boundary between them
 (convergent / divergent / transform). No iteration loop, no accumulated
-deformation. This trades realism for clarity and reproducibility — see
-`docs/terrain/TERRAIN_GENERATION.md` (forthcoming) for the methods writeup.
+deformation. This trades realism for clarity and reproducibility.
 """
 
 from __future__ import annotations

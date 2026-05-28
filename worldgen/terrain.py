@@ -7,13 +7,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class TerrainType:
-    """A terrain type with its properties.
-
-    Per-good yields are NOT a property of the terrain type — they are computed
-    per hex by ``goods.yield_model.compute_yields`` from the worldgen
-    pipeline's outputs (crop suitability, deposits, water flags) plus the
-    configured ``[goods.extraction.*]`` rules.
-    """
+    """A terrain type with its properties."""
 
     name: str
     movement_cost: float

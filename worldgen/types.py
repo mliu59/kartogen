@@ -16,12 +16,6 @@ class HexData:
     elevation in this world (typically ~4.5 km in real-world calibration).
     Negative values are below sea level (ocean floor).
 
-    ``crop_suitability`` maps crop name → suitability in [0, 1] (0 = cannot grow,
-    1 = ideal). Empty over water tiles.
-
-    ``deposits`` maps resource name → deposit quantity (abstract units; relative
-    only). Empty if no deposit at this hex.
-
     Plate fields (``plate_id``, ``plate_type``, ``nearest_boundary_type``,
     ``distance_to_boundary_km``) are populated when ``mask_mode == "plates"``
     and ``None`` otherwise. ``nearest_boundary_type`` is one of
@@ -39,94 +33,10 @@ class HexData:
     precipitation_mm: float
     flow_accumulation: int  # upstream hex count, 1 = headwater
     biome: str
-    crop_suitability: dict[str, float]
-    deposits: dict[str, float]
     plate_id: int | None
     plate_type: str | None
     nearest_boundary_type: str | None
     distance_to_boundary_km: float | None
-
-
-@dataclass(frozen=True, slots=True)
-class CropDefinition:
-    """Environmental envelope for a crop, plus per-biome compatibility multipliers.
-
-    Suitability is computed as the product of trapezoidal membership scores
-    for temperature and precipitation, multiplied by a per-biome compatibility
-    factor, with optional river / coast / irrigation bonuses.
-
-    Each trapezoid has four points: ``abs_min ≤ opt_min ≤ opt_max ≤ abs_max``.
-    Score is 0 outside ``[abs_min, abs_max]``, 1 within ``[opt_min, opt_max]``,
-    and linearly interpolated on the ramps.
-    """
-
-    name: str
-    # Temperature trapezoid (°C)
-    temp_abs_min: float
-    temp_opt_min: float
-    temp_opt_max: float
-    temp_abs_max: float
-    # Precipitation trapezoid (mm/yr); if the crop is irrigated, the effective
-    # precipitation includes the river bonus below.
-    precip_abs_min: float
-    precip_opt_min: float
-    precip_opt_max: float
-    precip_abs_max: float
-    # Max normalized elevation a crop can grow at (above sea level).
-    elev_max: float
-    # Per-biome multiplier; biomes not listed default to 0 (crop cannot grow).
-    biome_compatibility: dict[str, float]
-    # Bonus suitability multiplier if the tile is itself a river hex.
-    river_bonus: float
-    # Multiplier added if any neighbor is a river/lake (irrigation access).
-    river_adjacent_bonus: float
-    # Bonus multiplier if the tile is a coast hex.
-    coast_bonus: float
-    # If True, treat the river/irrigation bonus as effective rainfall —
-    # i.e., apply it to the precipitation trapezoid as a fixed addition
-    # (useful for crops like rice that can be paddy-irrigated).
-    irrigation_replaces_rain_mm: float
-
-
-@dataclass(frozen=True, slots=True)
-class ResourceDefinition:
-    """A natural resource deposit type and its distribution parameters.
-
-    Distribution model: a per-resource Perlin field (seeded child-RNG by name)
-    sampled at each candidate hex; deposits exist where the field exceeds the
-    rarity threshold AND the hex matches the eligibility rules below. Deposit
-    quantity is proportional to (noise_value − rarity_threshold).
-    """
-
-    name: str
-    # Biomes that can host this deposit. Empty tuple means "any land biome".
-    host_biomes: tuple[str, ...]
-    # Hard elevation bounds (normalized). e.g., copper porphyries above 0.05;
-    # coal must be below 0.4. Values outside [min, max] are excluded.
-    min_elevation: float
-    max_elevation: float
-    # Climate gating: deposits only where temperature ∈ [min, max] and
-    # precipitation ∈ [min, max]. Defaults span all conditions (-∞..∞).
-    min_temperature_c: float
-    max_temperature_c: float
-    min_precipitation_mm: float
-    max_precipitation_mm: float
-    # Spatial pattern: feature wavelength in km. Larger = bigger contiguous
-    # districts (coal basin ~250 km). Smaller = more scattered (salt ~50 km).
-    feature_wavelength_km: float
-    # Top fraction of eligible hexes to seed deposits in (after biome/elev
-    # gating). Higher = more abundant. ~0.05 = rare, ~0.25 = common.
-    abundance: float
-    # Mean deposit quantity multiplier. Final quantity =
-    # mean_quantity × (1 + elevation_bonus × elevation_above_sea).
-    mean_quantity: float
-    # If positive, deposits at higher elevation are richer (relevant for
-    # iron/copper in mountains).
-    elevation_quantity_bonus: float
-    # Tags this resource for special rendering / domain logic.
-    # Currently informational only; can be one of:
-    # "ore" | "fuel" | "evaporite" | "building" | "sedimentary" | "timber".
-    category: str
 
 
 @dataclass(frozen=True)
@@ -280,10 +190,6 @@ class WorldgenConfig:
     grassland_max_precip: float
     forest_max_precip: float
     cool_band_dry_threshold: float
-
-    # Crops & resources — loaded from [worldgen.crops.*] and [worldgen.resources.*]
-    crops: tuple[CropDefinition, ...] = ()
-    resources: tuple[ResourceDefinition, ...] = ()
 
     # --- Derived properties (computed from hex_size_km) ---
 

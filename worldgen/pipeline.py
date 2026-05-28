@@ -11,7 +11,6 @@ from worldgen import climate as climate_layer
 from worldgen import elevation as elevation_layer
 from worldgen import hydrology as hydrology_layer
 from worldgen import plates as plates_layer
-from worldgen import resources as resources_layer
 from worldgen import sea as sea_layer
 from worldgen.plates import PlateField
 from worldgen.types import (
@@ -73,12 +72,6 @@ def generate(
     clim = climate_layer.compute(elev, sea, radius, config, rng)
     hydro = hydrology_layer.compute(elev, sea, clim.precipitation_mm, config)
     biomes = biome_layer.assign(elev, sea, clim, hydro, config)
-    crop_scores = resources_layer.compute_crop_suitability(
-        hexes, elev, sea, clim, hydro, biomes, config.crops,
-    )
-    deposits = resources_layer.compute_resource_deposits(
-        hexes, elev, sea, clim, hydro, biomes, config.resources, config, rng,
-    )
 
     hex_data: dict[Hex, HexData] = {}
     for h in hexes:
@@ -103,8 +96,6 @@ def generate(
             precipitation_mm=clim.precipitation_mm[h],
             flow_accumulation=hydro.flow_accumulation[h],
             biome=biomes[h],
-            crop_suitability=crop_scores.get(h, {}),
-            deposits=deposits.get(h, {}),
             plate_id=pid_out,
             plate_type=ptype,
             nearest_boundary_type=btype,
