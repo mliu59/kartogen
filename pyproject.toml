@@ -12,6 +12,10 @@ dependencies = [
     # tqdm drives the per-layer progress bars when verbose logging is on.
     # Pulled into core because the CLI is verbose by default.
     "tqdm>=4.66",
+    # numpy backs the tectonic_sim particle cloud — vectorised drift,
+    # spatial queries, and snapshot arrays. Worldgen itself never imports
+    # numpy directly, but it ships in the same env as tectonic_sim.
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
@@ -22,12 +26,16 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["worldgen*"]
+# Both packages live at the repo root, in the same install. The
+# in-package tests directory (``tectonic_sim/tests``) is excluded so
+# the wheel doesn't ship test code to consumers.
+include = ["worldgen*", "tectonic_sim*"]
+exclude = ["tectonic_sim.tests*"]
 
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-src = ["worldgen", "tests"]
+src = ["worldgen", "tectonic_sim", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "TCH"]
@@ -37,7 +45,10 @@ python_version = "3.11"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
-packages = ["worldgen"]
+packages = ["worldgen", "tectonic_sim"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+# Worldgen tests are temporarily disabled while we focus on tectonic_sim.
+# Re-add ``"tests"`` to this list when we resume worldgen integration
+# (Phases 11–13 — bridge, cutover, preview delegation).
+testpaths = ["tectonic_sim/tests"]

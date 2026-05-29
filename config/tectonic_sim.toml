@@ -1,0 +1,119 @@
+# =========================================================================
+# tectonic_sim — physics-only configuration.
+#
+# This file is consumed by the standalone `tectonic_sim` module. It knows
+# nothing about hex grids, climate, or worldgen — every parameter here is
+# a knob on the continuous-2D particle-cloud plate tectonics simulation.
+#
+# Worldgen references this file via the `tectonic_sim_config` key in
+# config/worldgen.toml; the sim runs on the same world rectangle the
+# worldgen pipeline uses, but the rectangle itself is *not* configured
+# here (the caller passes it in to `simulate()`).
+# =========================================================================
+
+# --- Plate population ---
+plate_count = 5
+continental_fraction = 0.5
+motion_speed_kmpy = 60.0
+# Seed-placement bias: 0 = uniform across the rectangle, >0 prefers the
+# centre, <0 prefers the edges. Mild values (±0.3) are usually enough.
+seed_radial_bias = 0.0
+
+# --- Initial particle layout ---
+# Bridson Poisson-disc target separation. Average particle density works
+# out to ~1 / (π · s² / 4); at 15 km that's ~5,700 particles for a
+# 1,000×1,000 km world. Smaller spacing → finer boundaries, higher cost.
+particle_spacing_km = 15.0
+
+# --- Sim duration ---
+n_ticks = 100                       # 100 × 2 Myr = 200 Myr of geological time
+dt_myr = 2.0
+
+# --- Initial crust thicknesses (km) ---
+continental_thickness_km = 35.0
+oceanic_thickness_km = 7.0
+# Thinned continental crust spawned at a divergent gap whose nearest
+# plate is itself continental — produces rift-valley basins (East-
+# African-Rift / Dead-Sea analogue) rather than fresh oceanic floor.
+rift_thickness_km = 33.0
+
+# --- Half-space cooling (oceanic floor depth) ---
+# depth_below_sea_level = ridge_depth_km + ridge_subsidence_rate · √age_myr
+# Earth-like: ridge ≈ 2.5 km, rate ≈ 0.35 km/√Myr, abyssal plain ≈ 6 km.
+ridge_depth_km = 2.5
+ridge_subsidence_rate = 0.35
+max_ocean_depth_km = 6.0
+
+# --- Continental isostasy ---
+# elevation_km = (thickness - reference) · isostasy_factor
+continental_reference_thickness_km = 35.0
+continental_isostasy_factor = 0.15
+
+# Signed-km sea level. Particles whose elevation lands below this become
+# ocean; particles above become land. Applied at the sampling step.
+sea_level_km = 0.0
+
+# --- Collision ---
+# NOTE: the cross-plate detection radius is NOT a config knob — it is
+# hardcoded to 1.5 × particle_spacing_km (see types.OVERLAP_RADIUS_MULTIPLIER).
+# Bridson Poisson-disc guarantees adjacent particles are at least
+# particle_spacing_km apart, so anything below that would detect zero
+# pairs by construction; 1.5× catches the immediate-neighbour rank along
+# each Voronoi boundary.
+orogeny_uplift_per_overlap_km = 0.08      # cc-collision thickening per tick
+folding_ratio = 0.05                      # mass transferred from smaller to larger
+folding_displacement_km = 1.5             # lower particle's drift toward the higher
+subduction_arc_uplift_km = 0.04           # oc/oo-collision thickening on the survivor
+
+# Continental absorption: a continental particle thinned below this is
+# considered absorbed by its over-rider. The depleted particle is removed
+# and its remaining mass is transferred to the nearest cross-plate
+# continental neighbour. 10 km is ~28 % of the bundled continental
+# starting thickness — well below "depleted" but above zero. Lower values
+# delay absorption; higher values consume underthrusters more aggressively.
+min_continental_thickness_km = 10.0
+
+# --- Contact constraints + velocity damping ---
+# Geometric rigid-body constraint: after collision resolution, push
+# overlapping cross-plate particle pairs apart in `contact_iterations`
+# relaxation passes. Each pass detects pairs within overlap_radius and
+# moves each particle in a pair by half the overlap depth along the
+# connecting axis. 4 iterations is plenty for typical configurations.
+contact_iterations = 4
+# Plate-level velocity damping: each tick, if `fraction` of a plate's
+# particles are in collision pairs, its velocity is multiplied by
+# (1 - velocity_damping_strength × fraction). Energy dissipated this way
+# goes implicitly into thickening via the orogeny uplift term.
+velocity_damping_strength = 0.05
+# Intra-plate spacing constraint. A second PBD pass per iteration pushes
+# same-plate particles apart if they're closer than
+#   intra_plate_min_distance_factor × particle_spacing_km.
+# Models crust incompressibility — without it, the cross-plate constraint
+# compresses same-plate neighbours into "force chain" stripes (a PBD
+# artefact, not a tectonic signal). Bridson Poisson-disc guarantees rest
+# separation ≥ 1.0 × particle_spacing_km; this only fires when contact
+# pressure has squeezed neighbours well below that. 0 disables.
+intra_plate_min_distance_factor = 0.5
+
+# --- Erosion ---
+# Every N ticks, blend each particle's thickness toward its k-NN same-plate
+# neighbours by `erosion_strength`. 0 disables.
+erosion_period = 10
+erosion_strength = 0.05
+
+# --- Boundary handling ---
+# How particles at the rectangle boundary are treated:
+#   "wrap" — the domain is a torus; particles that drift past one edge
+#            re-enter from the opposite edge. Cross-edge collision and
+#            divergent-fill queries use the toroidal shortest-distance
+#            metric. This is the recommended default — it keeps every
+#            plate "alive" no matter which way it drifts.
+#   "open" — particles that drift past the rectangle are deleted at the
+#            next cull step. Easier to reason about geometrically but
+#            allows plates to drift entirely out of the world.
+boundary_mode = "wrap"
+
+# --- Snapshot capture (drift animation) ---
+# Capture a Frame every N ticks. 0 disables capture. 1 captures every tick,
+# producing the smoothest drift GIF.
+snapshot_period_ticks = 1

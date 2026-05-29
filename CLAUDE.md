@@ -135,6 +135,29 @@ The configurable `sea_level_km` threshold separates land from ocean. In
 `plates` mode this absolute value is the contract, not the analytic-mode
 `land_fraction` quantile.
 
+**Sea level is decoupled from crust dynamics.** `sea_level_km` is a
+passive sampling threshold + the elevation-render colormap midpoint;
+nothing in the collision / drift / divergent-fill / contact-constraint
+pipeline reads it. Particles know their thickness, age, type, plate, and
+position — not whether they're "above water." The isostasy module returns
+signed elevation in km from a mantle reference, and sea level is just the
+water line on that signed axis. The payoff is that two natural sweeps
+come for free:
+
+  - **Hold the world fixed, vary sea level.** Raising `sea_level_km` by
+    +0.5 km instantly converts every continental hex sitting in
+    `[reference, reference + 3.3 km]` of thickness from land to
+    epicontinental sea — no sim rerun. Cretaceous-style high stands and
+    glacial-maximum low stands are a config edit.
+  - **Hold sea level fixed, vary tectonic parameters.** Plate dynamics
+    alone reshape geography; the water line stays at the same physical
+    reference so before/after maps are directly comparable.
+
+Fold sea level into dynamics only when a feedback effect needs it —
+erosion (Phase 7) is the first place that becomes physically meaningful
+(weathering above the water line, deposition below it). None of the
+current physics phases need it.
+
 **v1 deferrals.** No Wilson-cycle re-seeding (plates drift on their initial
 velocities for the full sim). No plate rotation. No continent merging. No
 proper stream-power erosion. No hotspots / transform faults. Erosion is a
