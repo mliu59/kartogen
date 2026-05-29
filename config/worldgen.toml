@@ -23,204 +23,24 @@
 # Generated worlds will look the same at any chosen resolution.
 hex_size_km = 5.0
 
-# Macro landmass preset. Picks a baseline from [worldgen.presets.<name>].
-# Any keys explicitly set in [worldgen.elevation] override the preset.
-# Available presets:
-#   island_continent  — one continent ringed by ocean (the v0 default look)
-#   archipelago       — scattered islands, no central mass
-#   continental_coast — coastal strip of a larger continent off-map
-#   dual_continents   — two continents separated by an ocean channel
-#   land_mass         — nearly all land, with interior lakes & rivers only
-preset = "land_mass"
+[worldgen.world]
+# Rectangular map footprint in km. The world hex set is every hex whose
+# flat-top pixel centre falls in the rectangle [-W/2, W/2] × [-H/2, H/2].
+# Width is the east-west extent (latitude is unchanged across it);
+# height is the north-south extent (latitude varies across it; see
+# [worldgen.climate] map_lat_min / map_lat_max).
+width_km = 1000.0
+height_km = 1000.0
+
+# =========================================================================
+# Elevation-layer parameters. The macro structure comes from the
+# time-stepped tectonics simulation seeded by the [worldgen.elevation.plates]
+# table; fBm/ridged noise contributes small-scale detail blended in at
+# `tectonic_blend_weight`. (The preset system that used to live here is
+# disabled — only this single configuration is supported for now.)
+# =========================================================================
 
 [worldgen.elevation]
-# Per-field overrides on top of the selected preset. Leave empty to use
-# the preset verbatim, or set any subset of the keys defined under
-# [worldgen.presets.*] to tune one knob without forking a preset.
-# Example:
-#   land_fraction = 0.65
-#   mask_strength = 0.30
-
-# =========================================================================
-# Continent-mask presets. Each must define every elevation-layer field —
-# missing fields fail at load time (no silent defaults).
-# Shared (noise) fields that don't usually vary between presets are still
-# repeated explicitly so each preset is fully self-contained.
-# =========================================================================
-
-# All presets use mask_mode = "plates" — the macro layout is driven by a
-# Voronoi plate field with seed-derived motion vectors and boundary effects
-# (mountains at convergent boundaries, rifts at divergent ones). The fBm
-# noise becomes detail texture on top of the plate-shaped baseline rather
-# than the primary structure.
-#
-# Common analytic-mask fields are still present so the same dataclass
-# parses; mask_strength scales the plate-bias contribution (1.0 = pass
-# through). mask_power / mask_inner_fraction / mask_anchor_fraction are
-# unused under plates mode but kept set to neutral values.
-
-[worldgen.presets.island_continent]
-# One continental plate ringed by oceanic plates. Seed placement biased
-# toward the center, so the continental plate lands near (0,0) and oceans
-# wrap the edges. Few plates → smooth, simple coastlines.
-land_fraction = 0.55
-feature_wavelength_km = 250.0
-noise_octaves = 6
-noise_lacunarity = 2.0
-noise_persistence = 0.5
-warp_strength_km = 25.0
-warp_wavelength_km = 333.0
-ridge_octaves = 5
-ridge_amplitude = 0.55
-ridge_threshold = 0.15
-mask_mode = "plates"
-mask_strength = 1.0
-mask_power = 1.0
-mask_inner_fraction = 0.0
-mask_anchor_fraction = 0.0
-
-[worldgen.presets.island_continent.plates]
-count = 5
-continental_fraction = 0.25         # ~1 of 5 plates continental (biased to center)
-min_separation_km = 600.0
-seed_radial_bias = 0.0              # uniform; the small count + low continental_fraction does the work
-boundary_warp_strength_km = 60.0
-boundary_warp_wavelength_km = 260.0
-motion_speed = 1.0
-continental_baseline = 0.30
-oceanic_baseline = -0.40
-mountain_amplitude = 0.55
-coastal_range_amplitude = 0.45
-island_arc_amplitude = 0.30
-rift_depth = 0.20
-boundary_falloff_km = 150.0
-baseline_blend_km = 200.0          # soft transition of plate baseline elevation across plate boundaries (continental-shelf effect)
-convergence_threshold = 0.10
-
-[worldgen.presets.archipelago]
-# Many small plates, mostly oceanic with a few small continental and
-# frequent oo_convergent / oc_convergent boundaries → island arcs and
-# scattered coastal land. Tight plate count, low continental fraction.
-land_fraction = 0.32
-feature_wavelength_km = 140.0
-noise_octaves = 6
-noise_lacunarity = 2.0
-noise_persistence = 0.55
-warp_strength_km = 30.0
-warp_wavelength_km = 250.0
-ridge_octaves = 4
-ridge_amplitude = 0.40
-ridge_threshold = 0.25
-mask_mode = "plates"
-mask_strength = 1.0
-mask_power = 1.0
-mask_inner_fraction = 0.0
-mask_anchor_fraction = 0.0
-
-[worldgen.presets.archipelago.plates]
-count = 14
-continental_fraction = 0.20         # 2-3 small continental plates among oceanic
-min_separation_km = 250.0
-seed_radial_bias = 0.0
-boundary_warp_strength_km = 50.0
-boundary_warp_wavelength_km = 180.0
-motion_speed = 1.0
-continental_baseline = 0.10
-oceanic_baseline = -0.35
-mountain_amplitude = 0.30
-coastal_range_amplitude = 0.35
-island_arc_amplitude = 0.50         # ↑ — drives the "island arc" character
-rift_depth = 0.20
-boundary_falloff_km = 90.0
-baseline_blend_km = 200.0          # soft transition of plate baseline elevation across plate boundaries (continental-shelf effect)
-convergence_threshold = 0.10
-
-[worldgen.presets.continental_coast]
-# Continental plates pushed toward one edge of the map → the off-map side
-# is implicitly more continent. seed_radial_bias < 0 places seeds toward
-# the edge; combined with a higher continental_fraction this creates a
-# dominant continent occupying most of one side with ocean on the other.
-land_fraction = 0.60
-feature_wavelength_km = 280.0
-noise_octaves = 6
-noise_lacunarity = 2.0
-noise_persistence = 0.5
-warp_strength_km = 30.0
-warp_wavelength_km = 350.0
-ridge_octaves = 5
-ridge_amplitude = 0.60
-ridge_threshold = 0.15
-mask_mode = "plates"
-mask_strength = 1.0
-mask_power = 1.0
-mask_inner_fraction = 0.0
-mask_anchor_fraction = 0.0
-
-[worldgen.presets.continental_coast.plates]
-count = 4
-continental_fraction = 0.5          # ~2 continental, 2 oceanic
-min_separation_km = 700.0
-seed_radial_bias = -0.6             # bias seeds toward the edge → larger continent
-boundary_warp_strength_km = 70.0
-boundary_warp_wavelength_km = 300.0
-motion_speed = 1.0
-continental_baseline = 0.35
-oceanic_baseline = -0.50
-mountain_amplitude = 0.55
-coastal_range_amplitude = 0.55      # ↑ — the coast is the defining feature
-island_arc_amplitude = 0.25
-rift_depth = 0.25
-boundary_falloff_km = 180.0
-baseline_blend_km = 200.0          # soft transition of plate baseline elevation across plate boundaries (continental-shelf effect)
-convergence_threshold = 0.10
-
-[worldgen.presets.dual_continents]
-# Two continents separated by an ocean channel. Achieved with 2-3
-# continental plates + oceanic plates between/around them; the seed
-# placement plus continental_fraction yields ~2 large landmasses on most
-# seeds. cc_convergent boundaries where the continents meet other plates
-# get the canonical mountain treatment.
-land_fraction = 0.50
-feature_wavelength_km = 220.0
-noise_octaves = 6
-noise_lacunarity = 2.0
-noise_persistence = 0.5
-warp_strength_km = 25.0
-warp_wavelength_km = 333.0
-ridge_octaves = 5
-ridge_amplitude = 0.60
-ridge_threshold = 0.15
-mask_mode = "plates"
-mask_strength = 1.0
-mask_power = 1.0
-mask_inner_fraction = 0.0
-mask_anchor_fraction = 0.0
-
-[worldgen.presets.dual_continents.plates]
-count = 6
-continental_fraction = 0.4          # ~2-3 continental among 6
-min_separation_km = 550.0
-seed_radial_bias = 0.0
-boundary_warp_strength_km = 60.0
-boundary_warp_wavelength_km = 280.0
-motion_speed = 1.0
-continental_baseline = 0.30
-oceanic_baseline = -0.45
-mountain_amplitude = 0.60
-coastal_range_amplitude = 0.45
-island_arc_amplitude = 0.30
-rift_depth = 0.25
-boundary_falloff_km = 160.0
-baseline_blend_km = 200.0          # soft transition of plate baseline elevation across plate boundaries (continental-shelf effect)
-convergence_threshold = 0.10
-
-[worldgen.presets.land_mass]
-# Continent-spanning world with substantial interior seas that feed the
-# climate. 0.85 leaves enough ocean (rift system + several low basins) to
-# act as moisture sources for the prevailing-wind sweep — without those,
-# the interior bottoms out at the precip baseline floor. Every plate is
-# still continental; deep oceanic baseline disabled.
-land_fraction = 0.85
 feature_wavelength_km = 260.0
 noise_octaves = 6
 noise_lacunarity = 2.0
@@ -230,13 +50,14 @@ warp_wavelength_km = 333.0
 ridge_octaves = 5
 ridge_amplitude = 0.70
 ridge_threshold = 0.10
-mask_mode = "plates"
-mask_strength = 1.0
-mask_power = 1.0
-mask_inner_fraction = 0.0
-mask_anchor_fraction = 0.0
+tectonic_blend_weight = 1.0
 
-[worldgen.presets.land_mass.plates]
+[worldgen.elevation.plates]
+# Continent-spanning world: every plate seeded as continental so the
+# baseline never drops to deep oceanic. Interior oceans / seas instead
+# emerge from rift fill + low continental basins — those feed the
+# prevailing-wind moisture sweep, without which continental interiors
+# bottom out at the precipitation floor.
 count = 4
 continental_fraction = 1.0          # everything is continental → no ocean baseline
 min_separation_km = 700.0
@@ -244,19 +65,22 @@ seed_radial_bias = 0.0
 boundary_warp_strength_km = 70.0
 boundary_warp_wavelength_km = 320.0
 motion_speed = 1.0
-continental_baseline = 0.30
-oceanic_baseline = -0.40            # unused (no oceanic plates)
-mountain_amplitude = 0.65           # cc_convergent ranges become the dominant geography
-coastal_range_amplitude = 0.45
-island_arc_amplitude = 0.30
-rift_depth = 0.30                   # divergent boundaries carve interior rift valleys / inland seas
-boundary_falloff_km = 200.0
-baseline_blend_km = 200.0          # soft transition of plate baseline elevation across plate boundaries (continental-shelf effect)
 convergence_threshold = 0.10
 
 [worldgen.climate]
-# Latitude → temperature, then lapse rate by elevation.
-# Latitude is taken as r-coordinate / radius (range [-1, 1]).
+# Latitude window the map covers. The pixel-y axis maps to a slice of
+# latitude: y = -height/2 (north edge) → map_lat_max, y = +height/2
+# (south edge) → map_lat_min. This is independent of width_km and
+# hex_size_km — you can simulate a 1000-km-wide map spanning 1° or 60° of
+# latitude alike. Defaults (-90, 90) reproduce the pole-to-pole gradient.
+# For a mid-latitude slice (e.g., a Europe-shaped continent) try
+# map_lat_min = 30, map_lat_max = 60.
+map_lat_min = -30.0
+map_lat_max = 60.0
+
+# Planet-wide climate anchors: equator_temp_c is the temperature at lat 0°,
+# polar_temp_c at ±90°. The map samples a slice of this gradient via the
+# lat window above. lapse rate is then applied per km of elevation.
 equator_temp_c = 28.0
 polar_temp_c = -22.0
 lapse_rate_c_per_km = 6.5
@@ -325,3 +149,117 @@ forest_max_precip = 1200.0
 cool_band_dry_threshold = 150.0
 # Above forest_max_precip → jungle (in warm zones) or temperate_forest (in cool zones)
 
+
+[worldgen.tectonics]
+# Time-stepped plate-tectonics simulation. Runs automatically when
+# `mask_mode = "plates"` is active. The plates layer (above) seeds the t=0
+# state — plate positions, types, and motion vectors — and this section
+# controls how those plates evolve over geological time.
+#
+# Each tick advances every plate by velocity × dt_myr, recomputes per-hex
+# overlap, resolves collisions (subduction or continental folding), spawns
+# fresh oceanic crust at divergent gaps, and ages all existing crust.
+# After n_ticks the final lithosphere column at each hex is converted to a
+# signed elevation (km) by:
+#
+#   continental:  e = (thickness - reference) × isostasy_factor
+#   oceanic:      e = -ridge_depth - subsidence_rate × √age_myr   (capped)
+#
+# That elevation is then normalized via [worldgen.climate] max_elevation_km
+# and fed to the elevation layer as the macro baseline; fBm/ridged noise
+# becomes small-scale detail on top (controlled by tectonic_blend_weight).
+
+n_ticks = 100                            # geological ticks (100 × 2 Myr = 200 Myr)
+dt_myr = 2.0                             # Myr per tick
+
+# Sea level threshold (km, signed). Used by plate-interaction logic to
+# decide ocean-floor vs land character of a column. Also subtracted from
+# the lithosphere baseline before normalization, so this value becomes 0
+# in the normalized elevation field.
+sea_level_km = 0.0
+
+# Multiplier applied to each plate's unit motion vector to get physical
+# velocity (km/Myr). Real Earth plates drift at ~30–100 km/Myr; here we use
+# a faster value so 200 Myr is enough to see substantial rearrangement.
+plate_speed_kmpy = 60.0
+
+# Initial column thicknesses (km). Continental crust nominally 30–40 km;
+# oceanic crust 5–10 km. These are starting values — collisions thicken
+# them over time, erosion thins them.
+continental_thickness_km = 35.0
+oceanic_thickness_km = 7.0
+# Thickness for new continental crust spawned at divergent gaps when the
+# nearest plate is itself continental — a rift-valley / failed-rift basin
+# rather than a fake oceanic basin. 28 km with isostasy_factor 0.15 puts
+# the column at ~−1 km elevation (East-African-Rift / Dead-Sea analogue).
+rift_thickness_km = 33.0
+
+# Ocean floor depth via half-space cooling. Earth: ridge ≈ 2.5 km below
+# sea level, rate ≈ 0.35 km per √Myr, abyssal plains cap at ≈ 6 km.
+ridge_depth_km = 2.5
+ridge_subsidence_rate = 0.35              # km per √Myr
+max_ocean_depth_km = 6.0                  # cap on subsidence
+
+# Continental isostasy: elevation = (thickness - reference) × factor.
+# A 35-km column sits at sea level; +10 km of thickness gives +1.5 km of
+# elevation with factor 0.15 (a typical Tibetan-style continental rise).
+continental_reference_thickness_km = 35.0
+continental_isostasy_factor = 0.15
+
+# Collision response per tick that two plates overlap at a hex:
+#   - Continental-on-continental: transfer `folding_ratio` of smaller
+#     plate's thickness to larger; both gain orogeny uplift.
+#   - Either side oceanic: subduct the lower-buoyancy column; survivor
+#     gains arc uplift.
+orogeny_uplift_per_overlap_km = 0.08      # mountain building per overlap event
+folding_ratio = 0.05                      # fraction of smaller-plate mass folded over
+subduction_arc_uplift_km = 0.04           # volcanic arc thickening per subduction
+
+# Erosion is a placeholder PlaTec-style blur applied every N ticks: each
+# continental column blends a fraction toward its plate-local neighbors'
+# mean thickness. Submerged crust is not eroded. Set period=0 to disable.
+erosion_period = 10
+erosion_strength = 0.05
+
+# Boundary-warp post-processing. Each crust-type boundary hex gets a Perlin
+# noise sample; with probability set by `boundary_warp_strength`, the hex
+# is flipped to a different-type neighbour's column. This breaks the
+# integer-hex grid alignment left by rigid plate-stamp translation, so
+# coastlines look wavy (bays/headlands) instead of straight rectangular
+# edges. Set strength=0 to disable.
+boundary_warp_strength = 0.40         # 0..1; fraction of boundary hexes to flip
+boundary_warp_wavelength_km = 80.0    # Perlin wavelength; smaller = chunkier
+
+# Capture a snapshot of plate ownership + crust type every N ticks so the
+# drift can be played back as an animation (drift.gif in the export folder).
+# 0 disables. 1 = every tick (101 frames at default n_ticks=100; smoothest
+# drift because per-frame hex displacement is sub-hex). Larger values shrink
+# the GIF but make plate motion look like teleporting.
+snapshot_period_ticks = 1
+
+[worldgen.ocean]
+# Ocean currents (Tier 2 climate): each connected ocean basin is split by
+# hemisphere into one or two gyres, each rotating clockwise in the northern
+# hemisphere and counter-clockwise in the southern (Coriolis-driven). Per
+# ocean hex, the current direction is the tangent around the gyre centre;
+# the temperature anomaly is the planet's latitudinal temperature at the
+# point ``current_persistence_km`` upstream, minus the local lat temperature,
+# scaled by ``current_anomaly_strength``. This single-pass formula gives
+# warm western-boundary currents (Gulf Stream, Kuroshio) and cold eastern-
+# boundary currents (California, Humboldt, Canary).
+#
+# Coastal land hexes inherit a fraction of the adjacent ocean's anomaly,
+# decaying with distance inland. Continentality scales the precipitation
+# floor by exp(-distance_to_ocean_km / continentality_dry_scale_km), drying
+# deep continental interiors.
+#
+# Annual-mean snapshot — no seasonality.
+
+current_persistence_km = 2000.0         # ~Gulf Stream traversal distance
+current_anomaly_strength = 0.5          # 0..1; fraction of source-temp anomaly
+max_current_anomaly_c = 8.0             # cap on |anomaly|, °C
+
+coastal_pickup_fraction = 0.6           # at the coast itself, 0..1
+coastal_decay_km = 300.0                # e-folding distance into the interior
+
+continentality_dry_scale_km = 1500.0    # ~37% of precip floor at 1500 km inland

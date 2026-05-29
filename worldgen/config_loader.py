@@ -12,8 +12,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from worldgen.types import (
+    OceanConfig,
     PlateConfig,
+    TectonicsConfig,
     WorldgenConfig,
+    WorldShape,
 )
 
 
@@ -29,18 +32,33 @@ def load_worldgen_config(path: Path) -> WorldgenConfig:
 def parse_worldgen_config(wg: dict[str, object]) -> WorldgenConfig:
     """Parse a pre-loaded ``[worldgen]`` table into a ``WorldgenConfig``.
 
-    If ``[worldgen] preset = "<name>"`` is set, that preset's values from
-    ``[worldgen.presets.<name>]`` form the elevation-layer baseline, and any
-    keys explicitly set in ``[worldgen.elevation]`` override the preset.
+    Reads ``[worldgen.elevation]`` (with a nested ``plates`` sub-table) plus
+    the ``[worldgen.{climate,hydrology,biome,tectonics,ocean}]`` sections.
+    Every required field must be present — missing fields raise rather than
+    silently defaulting.
     """
-    wg_elev = _resolve_elevation_section(wg)
+    wg_elev = dict(wg.get("elevation", {}))  # type: ignore[arg-type]
     wg_clim = wg["climate"]  # type: ignore[index]
     wg_hydro = wg["hydrology"]  # type: ignore[index]
     wg_biome = wg["biome"]  # type: ignore[index]
 
+    plates_cfg = _parse_plate_config(wg_elev)
+    tect_cfg = _parse_tectonics_config(wg.get("tectonics"))  # type: ignore[arg-type]
+    ocean_cfg = _parse_ocean_config(wg.get("ocean"))  # type: ignore[arg-type]
+    world_cfg = _parse_world_shape(wg.get("world"))  # type: ignore[arg-type]
+    if (
+        plates_cfg is None or tect_cfg is None
+        or ocean_cfg is None or world_cfg is None
+    ):
+        raise ValueError(
+            "WorldgenConfig requires [worldgen.world], "
+            "[worldgen.elevation.plates], [worldgen.tectonics], and "
+            "[worldgen.ocean] tables."
+        )
+
     return WorldgenConfig(
         hex_size_km=wg["hex_size_km"],  # type: ignore[index]
-        land_fraction=wg_elev["land_fraction"],
+        world=world_cfg,
         feature_wavelength_km=wg_elev["feature_wavelength_km"],
         noise_octaves=wg_elev["noise_octaves"],
         noise_lacunarity=wg_elev["noise_lacunarity"],
@@ -50,12 +68,12 @@ def parse_worldgen_config(wg: dict[str, object]) -> WorldgenConfig:
         ridge_octaves=wg_elev["ridge_octaves"],
         ridge_amplitude=wg_elev["ridge_amplitude"],
         ridge_threshold=wg_elev["ridge_threshold"],
-        mask_mode=wg_elev["mask_mode"],
-        mask_strength=wg_elev["mask_strength"],
-        mask_power=wg_elev["mask_power"],
-        mask_inner_fraction=wg_elev["mask_inner_fraction"],
-        mask_anchor_fraction=wg_elev["mask_anchor_fraction"],
-        plates=_parse_plate_config(wg_elev),
+        tectonic_blend_weight=wg_elev["tectonic_blend_weight"],
+        plates=plates_cfg,
+        tectonics=tect_cfg,
+        ocean=ocean_cfg,
+        map_lat_min=float(wg_clim["map_lat_min"]),  # type: ignore[arg-type]
+        map_lat_max=float(wg_clim["map_lat_max"]),  # type: ignore[arg-type]
         equator_temp_c=wg_clim["equator_temp_c"],
         polar_temp_c=wg_clim["polar_temp_c"],
         lapse_rate_c_per_km=wg_clim["lapse_rate_c_per_km"],
@@ -90,12 +108,25 @@ def parse_worldgen_config(wg: dict[str, object]) -> WorldgenConfig:
     )
 
 
-def _parse_plate_config(wg_elev: dict[str, object]) -> PlateConfig | None:
-    """Parse the ``plates`` sub-table of an elevation section.
+def _parse_world_shape(raw: dict[str, object] | None) -> WorldShape | None:
+    """Parse the ``[worldgen.world]`` table into a ``WorldShape``."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise TypeError(
+            f"`world` must be a TOML table, got {type(raw).__name__}"
+        )
+    return WorldShape(
+        width_km=float(raw["width_km"]),  # type: ignore[arg-type]
+        height_km=float(raw["height_km"]),  # type: ignore[arg-type]
+    )
 
-    Returns ``None`` when no ``[…elevation.plates]`` (or ``…presets.X.plates``)
-    sub-table is present. Required when ``mask_mode == "plates"``; the
-    elevation layer raises if it goes to use plates and finds ``None``.
+
+def _parse_plate_config(wg_elev: dict[str, object]) -> PlateConfig | None:
+    """Parse the ``plates`` sub-table of the elevation section.
+
+    Returns ``None`` when no ``[worldgen.elevation.plates]`` sub-table is
+    present; ``parse_worldgen_config`` then raises with a clear message.
     """
     raw = wg_elev.get("plates")
     if raw is None:
@@ -112,57 +143,58 @@ def _parse_plate_config(wg_elev: dict[str, object]) -> PlateConfig | None:
         boundary_warp_strength_km=float(raw["boundary_warp_strength_km"]),  # type: ignore[arg-type]
         boundary_warp_wavelength_km=float(raw["boundary_warp_wavelength_km"]),  # type: ignore[arg-type]
         motion_speed=float(raw["motion_speed"]),  # type: ignore[arg-type]
-        continental_baseline=float(raw["continental_baseline"]),  # type: ignore[arg-type]
-        oceanic_baseline=float(raw["oceanic_baseline"]),  # type: ignore[arg-type]
-        mountain_amplitude=float(raw["mountain_amplitude"]),  # type: ignore[arg-type]
-        coastal_range_amplitude=float(raw["coastal_range_amplitude"]),  # type: ignore[arg-type]
-        island_arc_amplitude=float(raw["island_arc_amplitude"]),  # type: ignore[arg-type]
-        rift_depth=float(raw["rift_depth"]),  # type: ignore[arg-type]
-        boundary_falloff_km=float(raw["boundary_falloff_km"]),  # type: ignore[arg-type]
-        baseline_blend_km=float(raw["baseline_blend_km"]),  # type: ignore[arg-type]
         convergence_threshold=float(raw["convergence_threshold"]),  # type: ignore[arg-type]
     )
 
 
-def _resolve_elevation_section(wg: dict[str, object]) -> dict[str, object]:
-    """Merge ``[worldgen.elevation]`` with the selected preset.
+def _parse_ocean_config(raw: dict[str, object] | None) -> OceanConfig | None:
+    """Parse the ``[worldgen.ocean]`` table. Required for v1."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise TypeError(
+            f"`ocean` must be a TOML table, got {type(raw).__name__}"
+        )
+    return OceanConfig(
+        current_persistence_km=float(raw["current_persistence_km"]),  # type: ignore[arg-type]
+        current_anomaly_strength=float(raw["current_anomaly_strength"]),  # type: ignore[arg-type]
+        max_current_anomaly_c=float(raw["max_current_anomaly_c"]),  # type: ignore[arg-type]
+        coastal_pickup_fraction=float(raw["coastal_pickup_fraction"]),  # type: ignore[arg-type]
+        coastal_decay_km=float(raw["coastal_decay_km"]),  # type: ignore[arg-type]
+        continentality_dry_scale_km=float(raw["continentality_dry_scale_km"]),  # type: ignore[arg-type]
+    )
 
-    If ``preset`` is set under ``[worldgen]``, look up
-    ``[worldgen.presets.<preset>]`` and use it as the baseline. Any keys
-    present in ``[worldgen.elevation]`` override the preset's values. Every
-    field the dataclass needs must end up in the merged dict — missing fields
-    raise at construction rather than silently defaulting (project rule).
+
+def _parse_tectonics_config(raw: dict[str, object] | None) -> TectonicsConfig | None:
+    """Parse the ``[worldgen.tectonics]`` table.
+
+    Returns ``None`` if absent; ``parse_worldgen_config`` then raises.
     """
-    elev = dict(wg.get("elevation", {}))  # type: ignore[arg-type]
-    preset_name = wg.get("preset")
-    if preset_name is None:
-        return elev
-    if not isinstance(preset_name, str):
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
         raise TypeError(
-            f"[worldgen] preset must be a string, got {type(preset_name).__name__}"
+            f"`tectonics` must be a TOML table, got {type(raw).__name__}"
         )
-    presets = wg.get("presets", {})
-    if not isinstance(presets, dict) or preset_name not in presets:
-        available = sorted(presets.keys()) if isinstance(presets, dict) else []
-        raise KeyError(
-            f"[worldgen] preset={preset_name!r} not found in "
-            f"[worldgen.presets]. Available: {available}"
-        )
-    preset = presets[preset_name]
-    if not isinstance(preset, dict):
-        raise TypeError(
-            f"[worldgen.presets.{preset_name}] must be a table, got "
-            f"{type(preset).__name__}"
-        )
-    merged: dict[str, object] = dict(preset)
-    # Shallow merge of top-level keys, plus a one-level deep merge of the
-    # `plates` sub-table so users can override a single plate parameter
-    # without copying the entire table.
-    for k, v in elev.items():
-        if k == "plates" and isinstance(v, dict) and isinstance(merged.get("plates"), dict):
-            merged_plates = dict(merged["plates"])  # type: ignore[arg-type]
-            merged_plates.update(v)
-            merged["plates"] = merged_plates
-        else:
-            merged[k] = v
-    return merged
+    return TectonicsConfig(
+        n_ticks=int(raw["n_ticks"]),  # type: ignore[arg-type]
+        dt_myr=float(raw["dt_myr"]),  # type: ignore[arg-type]
+        sea_level_km=float(raw["sea_level_km"]),  # type: ignore[arg-type]
+        plate_speed_kmpy=float(raw["plate_speed_kmpy"]),  # type: ignore[arg-type]
+        continental_thickness_km=float(raw["continental_thickness_km"]),  # type: ignore[arg-type]
+        oceanic_thickness_km=float(raw["oceanic_thickness_km"]),  # type: ignore[arg-type]
+        rift_thickness_km=float(raw["rift_thickness_km"]),  # type: ignore[arg-type]
+        ridge_depth_km=float(raw["ridge_depth_km"]),  # type: ignore[arg-type]
+        ridge_subsidence_rate=float(raw["ridge_subsidence_rate"]),  # type: ignore[arg-type]
+        max_ocean_depth_km=float(raw["max_ocean_depth_km"]),  # type: ignore[arg-type]
+        continental_reference_thickness_km=float(raw["continental_reference_thickness_km"]),  # type: ignore[arg-type]
+        continental_isostasy_factor=float(raw["continental_isostasy_factor"]),  # type: ignore[arg-type]
+        orogeny_uplift_per_overlap_km=float(raw["orogeny_uplift_per_overlap_km"]),  # type: ignore[arg-type]
+        folding_ratio=float(raw["folding_ratio"]),  # type: ignore[arg-type]
+        subduction_arc_uplift_km=float(raw["subduction_arc_uplift_km"]),  # type: ignore[arg-type]
+        erosion_period=int(raw["erosion_period"]),  # type: ignore[arg-type]
+        erosion_strength=float(raw["erosion_strength"]),  # type: ignore[arg-type]
+        boundary_warp_strength=float(raw["boundary_warp_strength"]),  # type: ignore[arg-type]
+        boundary_warp_wavelength_km=float(raw["boundary_warp_wavelength_km"]),  # type: ignore[arg-type]
+        snapshot_period_ticks=int(raw["snapshot_period_ticks"]),  # type: ignore[arg-type]
+    )

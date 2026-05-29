@@ -17,7 +17,8 @@ from worldgen.plates import (
     PLATE_TYPE_CONTINENTAL,
     PLATE_TYPE_OCEANIC,
 )
-from worldgen.types import PlateConfig, WorldgenConfig
+from worldgen.types import PlateConfig, WorldgenConfig, WorldShape
+from worldgen.world import rect_world_hexes
 
 VALID_BOUNDARIES = {
     BOUNDARY_CC_CONVERGENT,
@@ -37,25 +38,28 @@ def _plate_config(**overrides: object) -> PlateConfig:
         boundary_warp_strength_km=50.0,
         boundary_warp_wavelength_km=250.0,
         motion_speed=1.0,
-        continental_baseline=0.25,
-        oceanic_baseline=-0.40,
-        mountain_amplitude=0.55,
-        coastal_range_amplitude=0.45,
-        island_arc_amplitude=0.35,
-        rift_depth=0.25,
-        boundary_falloff_km=150.0,
-        baseline_blend_km=200.0,
         convergence_threshold=0.10,
     )
     return replace(base, **overrides)  # type: ignore[arg-type]
 
 
+_HEX_SIZE_KM = 5.0
+
+
+def _shape(side_km: float) -> WorldShape:
+    return WorldShape(width_km=side_km, height_km=side_km)
+
+
+def _hexes(side_km: float) -> list[Hex]:
+    return rect_world_hexes(_shape(side_km), _HEX_SIZE_KM)
+
+
 def test_plate_generation_deterministic() -> None:
     """Same seed + config produces identical plate fields."""
-    hexes = Hex(0, 0).spiral(12)
+    hexes = _hexes(120.0)
     cfg = _plate_config()
-    a = plates_layer.generate_plates(hexes, 12, cfg, hex_size_km=5.0, rng=RngHierarchy(42))
-    b = plates_layer.generate_plates(hexes, 12, cfg, hex_size_km=5.0, rng=RngHierarchy(42))
+    a = plates_layer.generate_plates(hexes, cfg, hex_size_km=_HEX_SIZE_KM, rng=RngHierarchy(42))
+    b = plates_layer.generate_plates(hexes, cfg, hex_size_km=_HEX_SIZE_KM, rng=RngHierarchy(42))
     assert [(p.id, p.seed_hex, p.type, p.motion) for p in a.plates] == \
            [(p.id, p.seed_hex, p.type, p.motion) for p in b.plates]
     for h in hexes:
@@ -65,9 +69,9 @@ def test_plate_generation_deterministic() -> None:
 
 
 def test_every_hex_assigned_to_a_plate() -> None:
-    hexes = Hex(0, 0).spiral(15)
+    hexes = _hexes(150.0)
     cfg = _plate_config(count=8)
-    field = plates_layer.generate_plates(hexes, 15, cfg, hex_size_km=5.0, rng=RngHierarchy(1))
+    field = plates_layer.generate_plates(hexes, cfg, hex_size_km=_HEX_SIZE_KM, rng=RngHierarchy(1))
     assert set(field.hex_to_plate.keys()) == set(hexes)
     plate_ids = {p.id for p in field.plates}
     for h in hexes:
@@ -75,28 +79,28 @@ def test_every_hex_assigned_to_a_plate() -> None:
 
 
 def test_plate_count_matches_config() -> None:
-    hexes = Hex(0, 0).spiral(15)
+    hexes = _hexes(150.0)
     cfg = _plate_config(count=8)
-    field = plates_layer.generate_plates(hexes, 15, cfg, hex_size_km=5.0, rng=RngHierarchy(1))
+    field = plates_layer.generate_plates(hexes, cfg, hex_size_km=_HEX_SIZE_KM, rng=RngHierarchy(1))
     assert len(field.plates) == 8
 
 
 def test_plate_types_respect_continental_fraction() -> None:
     """With continental_fraction=1.0, every plate is continental."""
-    hexes = Hex(0, 0).spiral(12)
+    hexes = _hexes(120.0)
     cfg = _plate_config(continental_fraction=1.0)
-    field = plates_layer.generate_plates(hexes, 12, cfg, hex_size_km=5.0, rng=RngHierarchy(0))
+    field = plates_layer.generate_plates(hexes, cfg, hex_size_km=_HEX_SIZE_KM, rng=RngHierarchy(0))
     assert all(p.type == PLATE_TYPE_CONTINENTAL for p in field.plates)
 
     cfg2 = _plate_config(continental_fraction=0.0)
-    field2 = plates_layer.generate_plates(hexes, 12, cfg2, hex_size_km=5.0, rng=RngHierarchy(0))
+    field2 = plates_layer.generate_plates(hexes, cfg2, hex_size_km=_HEX_SIZE_KM, rng=RngHierarchy(0))
     assert all(p.type == PLATE_TYPE_OCEANIC for p in field2.plates)
 
 
 def test_boundary_types_are_valid() -> None:
-    hexes = Hex(0, 0).spiral(15)
+    hexes = _hexes(150.0)
     cfg = _plate_config(count=7)
-    field = plates_layer.generate_plates(hexes, 15, cfg, hex_size_km=5.0, rng=RngHierarchy(3))
+    field = plates_layer.generate_plates(hexes, cfg, hex_size_km=_HEX_SIZE_KM, rng=RngHierarchy(3))
     boundary_count = 0
     for h in hexes:
         btype = field.boundary_type[h]
@@ -109,9 +113,9 @@ def test_boundary_types_are_valid() -> None:
 
 
 def test_boundary_hexes_have_zero_distance() -> None:
-    hexes = Hex(0, 0).spiral(15)
+    hexes = _hexes(150.0)
     cfg = _plate_config(count=7)
-    field = plates_layer.generate_plates(hexes, 15, cfg, hex_size_km=5.0, rng=RngHierarchy(3))
+    field = plates_layer.generate_plates(hexes, cfg, hex_size_km=_HEX_SIZE_KM, rng=RngHierarchy(3))
     hex_set = set(hexes)
     for h in hexes:
         pid = field.hex_to_plate[h]
@@ -124,13 +128,13 @@ def test_boundary_hexes_have_zero_distance() -> None:
             assert field.distance_to_boundary_km[h] == 0.0
 
 
-def test_all_plates_use_preset_in_full_pipeline(default_worldgen_config: WorldgenConfig) -> None:
-    """The default preset (whichever it currently is) drives mask_mode='plates'
-    via the bundled preset configuration; pipeline.generate must produce a
-    populated PlateField and HexData with plate metadata."""
-    world = generate(radius=10, config=default_worldgen_config, seed=0)
+def test_all_plates_populated_in_full_pipeline(small_world_config: WorldgenConfig) -> None:
+    """The bundled config drives a plates-based pipeline; ``generate`` must
+    produce a populated ``PlateField`` and per-hex plate metadata on every
+    ``HexData``."""
+    world = generate(config=small_world_config, seed=0)
     assert world.plates is not None
-    assert len(world.plates.plates) == default_worldgen_config.plates.count  # type: ignore[union-attr]
+    assert len(world.plates.plates) == small_world_config.plates.count
     for h, data in world.hexes.items():
         assert data.plate_id is not None
         assert data.plate_type in (PLATE_TYPE_CONTINENTAL, PLATE_TYPE_OCEANIC)

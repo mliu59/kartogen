@@ -33,21 +33,38 @@ class HexData:
     precipitation_mm: float
     flow_accumulation: int  # upstream hex count, 1 = headwater
     biome: str
-    plate_id: int | None
-    plate_type: str | None
-    nearest_boundary_type: str | None
-    distance_to_boundary_km: float | None
+    plate_id: int
+    plate_type: str
+    nearest_boundary_type: str | None  # None if no boundary within BFS range
+    distance_to_boundary_km: float
+    # Lithosphere column produced by the dynamic tectonics simulation.
+    # ``crust_type`` is "continental" or "oceanic"; ``crust_age_myr`` is time
+    # since formation at a ridge (meaningful for oceanic crust — continental
+    # crust ages slowly and the value just accumulates).
+    crust_thickness_km: float
+    crust_type: str
+    crust_age_myr: float
+    # Ocean layer outputs. ``distance_to_ocean_km`` is 0 for ocean hexes and
+    # the BFS distance to the nearest ocean hex for land hexes.
+    # ``coastal_temp_anomaly_c`` is the temperature anomaly inherited from
+    # nearby ocean currents (0 for ocean hexes themselves; instead they carry
+    # ``current_temp_anomaly_c``).
+    # ``gyre_id`` is set only on ocean hexes (None on land).
+    distance_to_ocean_km: float
+    current_temp_anomaly_c: float
+    coastal_temp_anomaly_c: float
+    gyre_id: int | None
 
 
 @dataclass(frozen=True)
 class PlateConfig:
-    """Parameters for the plate-tectonics continent generator.
+    """Initial-condition parameters for the dynamic plate-tectonics simulator.
 
-    Static Voronoi plates (no time-simulated motion): seeds are placed by
-    rejection sampling, each plate is classified continental or oceanic, and
-    each gets a randomly-drawn motion vector. Boundary effects (mountains,
-    rifts) are applied as a function of distance to the nearest boundary and
-    the boundary's classification.
+    Used by ``generate_plates`` to set up the t=0 state — plate seed
+    placement, initial type assignment, motion vectors, and boundary-warp
+    geometry. The time-stepped tectonics simulation then evolves this state
+    over many Myr; per-hex topography emerges from accumulated convergence /
+    divergence rather than from a static distance-to-boundary look-up.
     """
 
     # Macro structure
@@ -55,34 +72,168 @@ class PlateConfig:
     continental_fraction: float             # share of plates that are continental
     min_separation_km: float                # rejection-sampling distance for seeds
     # Plate seed positions can be biased toward the world center (>0) or pushed
-    # toward the edge (<0). 0 = uniform across all hexes. Used by presets like
-    # `island_continent` (centered) and `continental_coast` (edge-biased).
+    # toward the edge (<0). 0 = uniform across all hexes.
     seed_radial_bias: float
 
     # Boundary geometry — irregular plate edges via warped Voronoi
     boundary_warp_strength_km: float
     boundary_warp_wavelength_km: float
 
-    # Motion
-    motion_speed: float                     # scale on random unit motion vectors
+    # Motion. Each plate gets a random unit motion vector multiplied by this
+    # scalar (km/Myr) to produce its initial physical velocity for the sim.
+    motion_speed: float
 
-    # Elevation contributions
-    continental_baseline: float             # added to fBm everywhere on a continental plate
-    oceanic_baseline: float                 # added to fBm everywhere on an oceanic plate
-    mountain_amplitude: float               # peak boundary uplift, cc_convergent
-    coastal_range_amplitude: float          # oc_convergent
-    island_arc_amplitude: float             # oo_convergent
-    rift_depth: float                       # depression, divergent boundaries
-    boundary_falloff_km: float              # decay length of boundary effects inland
-    # Width of the soft-Voronoi blend used to compute the per-hex baseline:
-    # at a hex whose distance to its 2nd-nearest plate seed is within this
-    # many km of its distance to the nearest, baselines blend with smoothstep
-    # weights. 0 = hard step (old behavior); 100–300 km = continental-shelf
-    # style smooth transition between plates of different type.
-    baseline_blend_km: float
     # Dot-product of relative motion onto inter-plate normal must exceed this
-    # for a boundary to be classified convergent/divergent; below = transform.
+    # for the *initial* boundary classification (informational only — the
+    # simulation re-derives boundary type per-tick from live velocities).
     convergence_threshold: float
+
+
+@dataclass(frozen=True)
+class TectonicsConfig:
+    """Parameters for the time-stepped plate tectonics simulation.
+
+    The sim runs ``n_ticks`` iterations of ``dt_myr`` Myr each. At each tick,
+    plates drift in continuous km coordinates; per-hex crust columns (carried
+    by each plate in plate-local hex space) overlap, collide, subduct, or
+    fold; new oceanic crust spawns where plates have moved apart.
+
+    All elevation-affecting parameters are physical (km, km/Myr, Myr).
+    """
+
+    # --- Sim duration ---
+    n_ticks: int                            # geological ticks to simulate
+    dt_myr: float                           # Myr per tick (typical: 1–5)
+
+    # --- Threshold ---
+    # Configurable sea-level threshold (km, signed elevation). Plate interaction
+    # logic consults this to decide ocean-floor vs land character of a column.
+    sea_level_km: float
+
+    # --- Plate motion ---
+    # Multiplier applied to each plate's unit motion vector to produce its
+    # physical velocity (km/Myr). Earth-like plates drift at ~30–100 km/Myr.
+    plate_speed_kmpy: float
+
+    # --- Initial crust thicknesses (km) ---
+    continental_thickness_km: float         # initial column thickness on continental plates
+    oceanic_thickness_km: float             # initial column thickness on oceanic plates
+    # When the simulation has to fill an empty world hex (a divergent gap
+    # between drifting plates), the type of crust spawned depends on the
+    # *nearest* plate's initial type:
+    #   • continental plate → thinned continental crust at this thickness,
+    #     producing a rift valley (Earth analogue: East African Rift / Dead
+    #     Sea). Defaults to ~28 km so isostasy yields ~−1 km elevation.
+    #   • oceanic plate → fresh oceanic crust at ``oceanic_thickness_km``.
+    # Without this branching, every gap became oceanic and an all-continental
+    # world would still be 50–70 % ocean.
+    rift_thickness_km: float
+
+    # --- Ocean floor depth (half-space cooling model) ---
+    # depth_below_sea_level = ridge_depth_km + ridge_subsidence_rate * sqrt(age)
+    # Earth: ridge_depth ≈ 2.5 km, rate ≈ 0.35 km/√Myr, max ≈ 6 km.
+    ridge_depth_km: float
+    ridge_subsidence_rate: float            # km per √Myr
+    max_ocean_depth_km: float               # cap on subsidence
+
+    # --- Continental isostasy ---
+    # elevation = (thickness - reference) * isostasy_factor
+    continental_reference_thickness_km: float
+    continental_isostasy_factor: float
+
+    # --- Collision response ---
+    # Per overlap event, the overriding plate's column gains this much thickness
+    # (orogeny). Higher = faster mountain building.
+    orogeny_uplift_per_overlap_km: float
+    # Fraction of the smaller continent's crust mass folded into the larger
+    # at each continental-collision tick (∈ [0, 1]; PlaTec default ~0.001).
+    folding_ratio: float
+    # Per-subduction-event thickening of the overriding plate (volcanic arc).
+    subduction_arc_uplift_km: float
+
+    # --- Erosion (placeholder blur, PlaTec-style) ---
+    erosion_period: int                     # apply every N ticks; 0 disables
+    erosion_strength: float                 # fraction blended with neighbor mean per pass
+
+    # --- Boundary-warp post-processing (breaks the integer-hex grid
+    # signature on continental↔oceanic boundaries left by rigid plate-stamp
+    # translation) ---
+    # Fraction of boundary hexes to consider flipping (per Perlin sample).
+    # 0 disables the warp entirely; ~0.35 produces visibly wavy coastlines
+    # without altering the macro-shape of continents.
+    boundary_warp_strength: float
+    # Perlin wavelength in km — how chunky the warp pattern is. 50–150 km
+    # gives bay-and-headland scale; >300 km looks like continent-edge
+    # bulges.
+    boundary_warp_wavelength_km: float
+
+    # --- Drift snapshots ---
+    # Capture a TectonicFrame every N ticks so the drift can be played back
+    # as an animation. 0 disables capture (and the drift GIF). Set to 1 to
+    # capture every tick (most detailed, biggest memory + GIF file); 5 is a
+    # reasonable default (100 ticks → 21 frames including t=0 and t=N).
+    snapshot_period_ticks: int
+
+
+@dataclass(frozen=True)
+class WorldShape:
+    """Rectangular world footprint, in physical units.
+
+    The world hex set is every hex whose flat-top pixel centre falls
+    within ``[-width_km/2, width_km/2] × [-height_km/2, height_km/2]``.
+    The map renders as a rectangle of these km dimensions; the hex grid
+    fills it as tightly as the integer axial lattice allows.
+
+    Configured via ``[worldgen.world] width_km, height_km``.
+    """
+
+    width_km: float
+    height_km: float
+
+    @property
+    def half_width_km(self) -> float:
+        return self.width_km / 2.0
+
+    @property
+    def half_height_km(self) -> float:
+        return self.height_km / 2.0
+
+
+@dataclass(frozen=True)
+class OceanConfig:
+    """Ocean-currents + continentality parameters (Tier 2 climate).
+
+    Each connected ocean basin is split by hemisphere into one or two gyres,
+    each rotating clockwise in the northern hemisphere and counter-clockwise
+    in the southern (the Coriolis-driven sign). Per ocean hex, the current
+    direction is the tangent of (hex − gyre_center); the temperature anomaly
+    is derived from the planetary latitudinal temperature differential
+    between the hex's location and a sample point ``current_persistence_km``
+    upstream. This single-pass formula gives warm western-boundary currents
+    and cold eastern-boundary currents without an explicit advection solver.
+    """
+
+    # How far upstream we sample for the source latitude. Real Earth: the
+    # Gulf Stream traverses ~4000 km from Florida to Iceland; 2000 km is a
+    # reasonable mid-strength default.
+    current_persistence_km: float
+    # Scale on the (upstream_temp − local_temp) differential. 1.0 = current
+    # carries the full source-temp anomaly; 0.5 = half.
+    current_anomaly_strength: float
+    # Cap on absolute temperature anomaly (°C). Real ocean current anomalies
+    # typically peak at ±5–10 °C.
+    max_current_anomaly_c: float
+
+    # Coastal pickup: each coastal land hex inherits a fraction of the
+    # adjacent ocean's current anomaly, decaying exponentially with distance
+    # inland. ``pickup_fraction`` is the value at the coast (0 km inland);
+    # ``decay_km`` is the e-folding distance.
+    coastal_pickup_fraction: float
+    coastal_decay_km: float
+
+    # Continentality: precip floor is multiplied by exp(−dist_km / scale_km).
+    # At the coast, factor = 1.0; ~1500 km inland (with scale=1500), ~0.37.
+    continentality_dry_scale_km: float
 
 
 @dataclass(frozen=True)
@@ -99,8 +250,10 @@ class WorldgenConfig:
 
     hex_size_km: float
 
+    # World footprint (width × height in km). See ``WorldShape``.
+    world: WorldShape
+
     # Elevation — physical-unit parameters
-    land_fraction: float
     # Dominant feature wavelength (km) for the base fBm — controls how
     # frequently mountain ranges and basins recur.
     feature_wavelength_km: float
@@ -114,29 +267,30 @@ class WorldgenConfig:
     ridge_octaves: int
     ridge_amplitude: float
     ridge_threshold: float
-    # Continent mask: shapes the macro landmass layout before quantile sea level.
-    # Modes:
-    #   "none"   — no shaping; sea level alone separates land/ocean. Combined
-    #              with a low land_fraction this produces an archipelago; with
-    #              a high land_fraction it produces a continuous landmass.
-    #   "radial" — concentric falloff toward the map edge (island continent).
-    #   "axial"  — one-sided ramp along a seed-chosen direction; the "ocean
-    #              side" is pulled down (continental coast).
-    #   "dual"   — two anchor points along a seed-chosen axis; mid-map and
-    #              edges pulled down (two-continent worlds).
-    mask_mode: str
-    mask_strength: float
-    mask_power: float
-    # Fraction-from-center (radial) or fraction-from-anchor (axial/dual) inside
-    # which no mask pull is applied.
-    mask_inner_fraction: float
-    # For mode="dual": distance from world center to each anchor, as a fraction
-    # of the cartesian world radius. Ignored by other modes.
-    mask_anchor_fraction: float
-    # Required when mask_mode == "plates"; may be None for the analytic modes.
-    plates: PlateConfig | None
+    # Blend weight between the tectonic baseline (1.0 = pure tectonics) and
+    # the fBm/ridged noise field (0.0 = pure noise). The noise contribution
+    # is scaled by the complement so the two together stay in roughly
+    # [-1, 1].
+    tectonic_blend_weight: float
+    # Plate seed placement + initial type assignment.
+    plates: PlateConfig
+    # Time-stepped tectonics simulation parameters.
+    tectonics: TectonicsConfig
+    # Ocean currents + continentality (Tier 2 climate enhancements).
+    ocean: OceanConfig
 
     # Climate
+    # Latitude window the hex grid covers, in degrees. The map's r-axis is
+    # interpreted as a slice of latitude: r = -radius is at ``map_lat_max``
+    # (north edge), r = +radius is at ``map_lat_min`` (south edge). The
+    # latitude window is *independent* of ``hex_size_km`` — you can simulate
+    # a fantasy-proportioned world where 1000 km spans 20° of latitude.
+    # Defaults of (-90, 90) reproduce the original pole-to-pole behaviour.
+    map_lat_min: float
+    map_lat_max: float
+    # Planet-wide climate anchors: ``equator_temp_c`` is the temperature at
+    # geographic latitude 0°, ``polar_temp_c`` at ±90°. The map samples a
+    # slice of that gradient via its lat window.
     equator_temp_c: float
     polar_temp_c: float
     lapse_rate_c_per_km: float
@@ -274,10 +428,17 @@ class SeaLayer:
 
 @dataclass(frozen=True)
 class ClimateLayer:
-    """Temperature (°C) and precipitation (mm/yr) per hex."""
+    """Per-hex climate fields.
+
+    ``wind_direction`` is a unit vector in the same screen-cartesian space
+    the renderer and ocean layer use (+x = east, +y = south). Computed once
+    by ``compute_wind_directions`` and reused by both precipitation and the
+    wind-preview render.
+    """
 
     temperature_c: dict[Hex, float]
     precipitation_mm: dict[Hex, float]
+    wind_direction: dict[Hex, tuple[float, float]]
 
 
 @dataclass(frozen=True)

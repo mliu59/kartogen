@@ -43,13 +43,18 @@ worldgen/
 ├── types.py           — WorldgenConfig + per-layer dataclasses + HexData
 ├── config_loader.py   — TOML → WorldgenConfig
 ├── pipeline.py        — orchestrator; returns GeneratedWorld
-├── plates.py          — L0: optional tectonic plate field
-├── elevation.py       — L1: fBm + ridged + domain warp + radial falloff
-├── sea.py             — L2: quantile threshold + coast tag
+├── plates.py          — L0a: t=0 plate seed placement + boundary classification
+├── tectonics.py       — L0b: time-stepped PlaTec-style simulation
+├── elevation.py       — L1: tectonic baseline + fBm/ridged detail + analytic mask
+├── sea.py             — L2: ocean/coast mask
 ├── climate.py         — L3+L4: temperature + precipitation (wind sweep, orographic)
 ├── hydrology.py       — L5: priority-flood + D6 flow accumulation → rivers/lakes
+├── ocean.py           — L2.5: gyre-based currents + continentality (Tier 2)
 ├── biome.py           — L6: Whittaker(T, P) + elevation/coast/water overrides
-└── preview.py         — CLI: PNG renderer (requires Pillow)
+├── preview.py         — Library: PNG renderer (requires Pillow), used by export
+└── export.py          — Public: WorldSnapshot container, serialize/save/load,
+                         and export_world (snapshot + per-layer PNGs to a
+                         timestamped folder)
 ```
 
 Tests under `tests/` mirror the package; `conftest.py` exposes `default_worldgen_config`, `small_world` (radius 12, seed 42), and `medium_world` (radius 30, seed 42) session-scoped fixtures.
@@ -60,15 +65,97 @@ Layer order — each layer is a pure function of all earlier layers' outputs plu
 
 ```
 seed + config
-  ↓ L0  plates        (optional) Voronoi plate field with type & boundary tags
-  ↓ L1  elevation     fBm + ridged multifractal + domain warp + radial falloff
-  ↓ L2  sea level     quantile threshold; coast tag
-  ↓ L3  temperature   latitude band + elevation lapse + small noise
-  ↓ L4  precipitation prevailing-wind moisture sweep with orographic uplift
-  ↓ L5  hydrology     priority-flood + ε-tilt → D6 flow accum → rivers, lakes
-  ↓ L6  biome         Whittaker(T, P) lookup + elevation/coast/water overrides
+  ↓ L0a plates         Voronoi plate seeding
+  ↓ L0b tectonics      time-stepped sim (n_ticks × dt_myr of geological time)
+  ↓ L1  elevation      tectonic baseline (km) + fBm/ridged detail
+  ↓ L2  sea level      ocean/coast mask (absolute sea_level_km)
+  ↓ L2.5 ocean         gyre-based currents + continentality (Tier 2)
+  ↓ L3  temperature    latitude band + lapse + ocean-current anomaly
+  ↓ L4  precipitation  prevailing-wind sweep + orographic uplift,
+                        floor damped by continentality
+  ↓ L5  hydrology      priority-flood + ε-tilt → D6 flow accum → rivers, lakes
+  ↓ L6  biome          Whittaker(T, P) lookup + elevation/coast/water overrides
 GeneratedWorld
 ```
+
+## Ocean layer (Tier 2 climate)
+
+`worldgen/ocean.py` runs between sea and climate, producing per-hex current
+directions and temperature anomalies. Annual-mean snapshot — no seasonality.
+
+**Gyres.** Each connected ocean basin is split by hemisphere into one or two
+gyres (CW rotation in NH, CCW in SH — the Coriolis sign). Per ocean hex,
+the current direction is the tangent of `(hex − gyre_centre)` rotated by
+the rotation sign.
+
+**Anomaly.** Single-pass formula: sample the planet's latitudinal
+temperature `current_persistence_km` upstream along the current; anomaly =
+`(upstream_temp − local_temp) × strength`, capped at `max_anomaly_c`. This
+reproduces warm western-boundary currents (Gulf Stream / Kuroshio) and cold
+eastern-boundary currents (California / Humboldt / Canary) without an
+explicit advection solver.
+
+**Coastal pickup.** BFS distance from every hex to the nearest ocean.
+Coastal land hexes inherit `ocean_anomaly × pickup_fraction × exp(-d/decay)`
+from the nearest ocean hex.
+
+**Continentality.** The precipitation floor is multiplied by
+`exp(-distance_to_ocean_km / continentality_dry_scale_km)`, drying deep
+continental interiors. The existing upwind moisture sweep continues to
+handle the dominant wind-driven drying — this term just damps the baseline
+floor so a 1500-km-inland hex doesn't get a uniform "240 mm minimum carpet"
+it shouldn't have.
+
+**Tier 2 deferrals.** No seasonal cycle (no monsoons, no winter sea-ice
+expansion), no pressure-field advection, no vegetation feedback. The
+single-pass anomaly model produces visible streaks where currents reverse
+between adjacent gyres; smoothing the field is a v2 task.
+
+## Tectonics layer
+
+When `mask_mode = "plates"`, the static Voronoi plate field becomes the t=0
+initial condition for a time-stepped PlaTec-style simulation. Each plate
+carries its own crust dictionary in plate-local hex coords; the plate's
+centre drifts in continuous km each tick; crust moves with the plate. Plates
+bounce off the world's circumscribed circle so they don't drift entirely
+off-disc (the hex disc isn't a torus).
+
+Per-tick: advance plate positions → compute per-world-hex overlap →
+resolve collisions (subduction or continental folding) → seed fresh oceanic
+crust where plates have pulled apart → age all crust. Optional erosion
+(continental thickness blur) every `erosion_period` ticks.
+
+After `n_ticks`, every world hex carries a `LithosphereColumn`
+(`crust_type`, `thickness_km`, `age_myr`). Elevation is derived:
+
+- Continental: `e_km = (thickness - reference) × continental_isostasy_factor`
+- Oceanic (half-space cooling): `e_km = -ridge_depth - subsidence_rate × √age`
+
+The configurable `sea_level_km` threshold separates land from ocean. In
+`plates` mode this absolute value is the contract, not the analytic-mode
+`land_fraction` quantile.
+
+**v1 deferrals.** No Wilson-cycle re-seeding (plates drift on their initial
+velocities for the full sim). No plate rotation. No continent merging. No
+proper stream-power erosion. No hotspots / transform faults. Erosion is a
+PlaTec-style continental thickness blur, not a real hydraulic model.
+
+## Map latitude window
+
+`hex_size_km` (the physical resolution) is **independent** of where the map
+sits on the planet. `[worldgen.climate]` carries `map_lat_min` /
+`map_lat_max` — the geographic latitudes the map's r-axis covers. The r-axis
+convention is **north = negative r** (matches the renderer's top-of-image).
+
+The planet's overall climate is anchored by `equator_temp_c` (at lat 0°) and
+`polar_temp_c` (at ±90°); the map samples a slice of that gradient through
+its lat window. Wind bands are Earth-like: trade easterlies inside ±30°,
+westerlies 30°–60°, polar easterlies above 60°, with smoothstep transitions.
+
+Defaults are `(-90, 90)` for pole-to-pole behaviour. For a temperate slice
+(e.g. a Europe-shaped continent) try `map_lat_min = 30, map_lat_max = 60`.
+The km extent of that map is whatever `hex_size_km × (2 × radius)` works out
+to — you can simulate a 1000-km map spanning 1° or 60° of latitude.
 
 **Physical-unit scaling.** Scale-dependent generator parameters are stored in physical units (km, km², mm/km of land fetch) and converted to per-hex units via `hex_size_km` at use time. Changing `hex_size_km` (default 5 km) automatically rescales noise frequency, wind reach, river thresholds, deposit feature wavelengths, and precipitation rates — the same physical world looks the same at any chosen hex resolution.
 
@@ -82,14 +169,52 @@ GeneratedWorld
 | `biome` | L6 (a name from `TERRAIN_NAMES`) |
 | `plate_id`, `plate_type`, `nearest_boundary_type`, `distance_to_boundary_km` | L0 (or `None` when plates are off) |
 
-## Preview CLI
+## Export
+
+Two public endpoints in `worldgen.export` (re-exported from the package root):
+
+- `serialize_world(world) -> WorldSnapshot` — pure projection of a
+  `GeneratedWorld` into a generic, JSON-friendly container. No side effects;
+  no timestamp / seed injected here. Identical worlds → equal snapshots.
+- `export_world(radius, config, seed, output_root) -> Path` — generates,
+  serializes to `snapshot.json`, and renders one PNG per layer under
+  `<output_root>/seed<seed>_r<radius>_<YYYYMMDD-HHMMSS>/layers/`. The
+  per-export folder name carries the seed + radius + timestamp; the snapshot's
+  `metadata` carries seed, timestamp, schema_version, mask_mode, hex_size_km.
+
+`save_snapshot` / `load_snapshot` are JSON file I/O helpers; `WorldSnapshot`
+itself is format-agnostic via `to_dict` / `from_dict`.
+
+**`WorldSnapshot` is deliberately a generic data container.** All three fields
+are open-ended `dict[str, Any]` / `list[dict[str, Any]]`:
+
+| Field | Shape | Holds |
+|---|---|---|
+| `metadata` | `dict[str, Any]` | run parameters, schema version, anything caller-injected |
+| `hexes` | `list[dict[str, Any]]` | one flat record per hex (q, r + every HexData field as primitives) |
+| `layers` | `dict[str, dict[str, Any]]` | layer-name → layer-level (non-per-hex) data |
+
+Adding a new per-hex field, a new intermediate layer, or new metadata keys
+does **not** require changing `WorldSnapshot`'s schema — the new data slots
+into the existing dicts. This is the extension point as the simulator grows.
+
+## Export CLI
+
+`python -m worldgen` is the canonical entry point — it generates a world,
+serializes it to `snapshot.json`, and renders every available layer as a
+PNG (plus a per-plate `plates/plate_NN.png` and a drift `drift.gif`).
 
 ```
-python -m worldgen.preview --seed 42 --radius 80 --layer biome --out world.png
-python -m worldgen.preview --seed 42 --radius 80 --all --out out/
+python -m worldgen --seed 42 --radius 80 --out exports/
+python -m worldgen --seed 42 --radius 80 --out exports/ --stop-after climate
+python -m worldgen --seed 42 --radius 80 --out exports/ -q   # silence logs
 ```
 
-`--all` renders every standard layer. Requires the `[preview]` extra (Pillow).
+`--stop-after STEP` halts the pipeline after the named step (one of
+`PIPELINE_STEPS`); only the layers whose source data is populated are
+rendered. Default logging is DEBUG (per-layer timings + progress bars);
+`-q`/`--quiet` drops to WARNING. Requires the `[preview]` extra (Pillow).
+`preview.py` is a pure library now — the only CLI is `python -m worldgen`.
 
 ## Conventions
 

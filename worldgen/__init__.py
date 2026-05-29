@@ -13,7 +13,24 @@ Each layer is a pure function of (prior_state, seeded_rng, config). Layers:
 The entry point is ``pipeline.generate(config, seed) -> GeneratedWorld``.
 """
 
+from worldgen.export import (
+    WorldSnapshot,
+    export_world,
+    load_snapshot,
+    save_snapshot,
+    serialize_world,
+)
 from worldgen.pipeline import GeneratedWorld, generate
 from worldgen.types import HexData, WorldgenConfig
 
-__all__ = ["GeneratedWorld", "HexData", "WorldgenConfig", "generate"]
+__all__ = [
+    "GeneratedWorld",
+    "HexData",
+    "WorldSnapshot",
+    "WorldgenConfig",
+    "export_world",
+    "generate",
+    "load_snapshot",
+    "save_snapshot",
+    "serialize_world",
+]

@@ -1,14 +1,27 @@
-"""Elevation layer: fBm + ridged multifractal + domain warp + continent mask."""
+"""Elevation layer: tectonic baseline blended with fBm/ridged noise.
+
+The macro structure (continents, basins, mountain belts) comes from the
+time-stepped tectonics simulation — ``LithosphereState.elevation_km``,
+already in physical km. We normalize it against ``max_elevation_km`` so the
+downstream pipeline (lapse rate, biome thresholds) keeps its usual
+[-1, 1]-ish range with sea level at 0.
+
+fBm + ridged noise (with domain warp) provides small-scale texture on top:
+crinkle within mountain ranges, basin-scale variation in plains, etc. The
+``tectonic_blend_weight`` knob controls the mix — 1.0 is pure tectonics,
+0.0 is pure noise (useful for debugging the noise field alone).
+"""
 
 from __future__ import annotations
 
 import math
 from collections.abc import Iterable
 
+from worldgen._log import progress
 from worldgen.rng import RngHierarchy
 from worldgen.hex import Hex
 from worldgen.noise import PerlinNoise2D, fbm, ridged_fbm
-from worldgen.plates import PlateField, plate_elevation_bias
+from worldgen.tectonics import LithosphereState
 from worldgen.types import ElevationLayer, WorldgenConfig
 
 
@@ -23,143 +36,31 @@ def _hex_to_xy(h: Hex) -> tuple[float, float]:
     return x, y
 
 
-def _ramp(t: float, power: float) -> float:
-    """Standard outward ramp: 0 below 0, t**power in [0, 1], clamped to 1."""
-    if t <= 0.0:
-        return 0.0
-    if t >= 1.0:
-        return 1.0
-    return t**power
-
-
-def _radial_mask(h: Hex, radius: int, inner: float, power: float) -> float:
-    """Concentric falloff from center to edge — island continent shape."""
-    if radius == 0:
-        return 0.0
-    d = max(abs(h.q), abs(h.r), abs(h.s)) / radius
-    if d <= inner:
-        return 0.0
-    return _ramp((d - inner) / (1.0 - inner), power)
-
-
-def _axial_mask(
-    h: Hex, radius: int, theta: float, inner: float, power: float
-) -> float:
-    """One-sided ramp along ``theta``: hexes on the negative-projection side
-    are pulled toward ocean, hexes on the positive side are untouched.
-
-    Produces a continental-coast world: the map represents a coastal strip
-    of a continent extending beyond the map edge in the +theta direction.
-    """
-    if radius == 0:
-        return 0.0
-    cx, cy = _hex_to_xy(h)
-    max_r = radius * math.sqrt(3.0)
-    proj = (math.cos(theta) * cx + math.sin(theta) * cy) / max_r
-    d = -proj  # how far into the "ocean side" we are, signed
-    if d <= inner:
-        return 0.0
-    return _ramp((d - inner) / (1.0 - inner), power)
-
-
-def _dual_mask(
-    h: Hex,
-    radius: int,
-    theta: float,
-    inner: float,
-    power: float,
-    anchor_fraction: float,
-) -> float:
-    """Two anchor points at ``±anchor_fraction · max_r`` along ``theta``;
-    pull-down ramps with distance to the *nearest* anchor.
-
-    Produces a two-continent world separated by an ocean channel along the
-    axis perpendicular to ``theta``.
-    """
-    if radius == 0:
-        return 0.0
-    cx, cy = _hex_to_xy(h)
-    max_r = radius * math.sqrt(3.0)
-    ax_x = math.cos(theta) * anchor_fraction * max_r
-    ax_y = math.sin(theta) * anchor_fraction * max_r
-    d1 = math.hypot(cx - ax_x, cy - ax_y) / max_r
-    d2 = math.hypot(cx + ax_x, cy + ax_y) / max_r
-    d = min(d1, d2)
-    if d <= inner:
-        return 0.0
-    return _ramp((d - inner) / (1.0 - inner), power)
-
-
-def _continent_mask_value(
-    h: Hex,
-    radius: int,
-    config: WorldgenConfig,
-    theta: float,
-    plate_field: PlateField | None,
-) -> float:
-    """Dispatch to the configured continent-mask mode.
-
-    Returns a *signed* adjustment to be added to fBm elevation. The analytic
-    modes (radial / axial / dual) only push down (negative return), while
-    the plates mode returns a signed bias (positive on continental plates and
-    near convergent boundaries, negative on oceanic plates and near rifts).
-    The single ``mask_strength`` knob scales the result uniformly.
-    """
-    mode = config.mask_mode
-    if mode == "none":
-        return 0.0
-    if mode == "radial":
-        return -_radial_mask(
-            h, radius, config.mask_inner_fraction, config.mask_power
-        )
-    if mode == "axial":
-        return -_axial_mask(
-            h, radius, theta, config.mask_inner_fraction, config.mask_power
-        )
-    if mode == "dual":
-        return -_dual_mask(
-            h,
-            radius,
-            theta,
-            config.mask_inner_fraction,
-            config.mask_power,
-            config.mask_anchor_fraction,
-        )
-    if mode == "plates":
-        if plate_field is None or config.plates is None:
-            raise ValueError(
-                "mask_mode='plates' requires both a PlateField and "
-                "[worldgen.elevation.plates] config."
-            )
-        return plate_elevation_bias(h, plate_field, config.plates)
-    raise ValueError(
-        f"Unknown continent mask_mode={mode!r}. "
-        "Expected one of: none, radial, axial, dual, plates."
-    )
-
-
 def compute(
     hexes: Iterable[Hex],
-    radius: int,
     config: WorldgenConfig,
     rng: RngHierarchy,
-    plate_field: PlateField | None = None,
+    lithosphere: LithosphereState,
 ) -> ElevationLayer:
-    """Compute the elevation field and a sea-level threshold."""
+    """Compute the normalized elevation field and the sea-level threshold (0).
+
+    The lithosphere's per-hex elevation_km (signed, km) is shifted so the
+    configured ``sea_level_km`` becomes 0 and normalized by
+    ``max_elevation_km`` so peaks sit near +1 and abyssal floors near -1.
+    Noise is then blended in via ``tectonic_blend_weight``.
+    """
     noise_base = PerlinNoise2D.from_rng(rng.child("worldgen", "elevation", "base"))
     noise_ridge = PerlinNoise2D.from_rng(rng.child("worldgen", "elevation", "ridge"))
     noise_warp_x = PerlinNoise2D.from_rng(rng.child("worldgen", "elevation", "warp_x"))
     noise_warp_y = PerlinNoise2D.from_rng(rng.child("worldgen", "elevation", "warp_y"))
 
-    # Orientation for axial/dual masks. Drawn from a dedicated child RNG so
-    # adding/removing the mask doesn't reshuffle other layers' seeds.
-    orientation_rng = rng.child("worldgen", "elevation", "mask_orientation")
-    theta = orientation_rng.uniform(0.0, 2.0 * math.pi)
+    sea_level_km = config.tectonics.sea_level_km
+    blend = config.tectonic_blend_weight
 
     elevation: dict[Hex, float] = {}
     hex_list = list(hexes)
 
-    for h in hex_list:
+    for h in progress(hex_list, desc="elevation", total=len(hex_list)):
         x, y = _hex_to_xy(h)
 
         # Domain warp: bend coordinates by a low-frequency noise field.
@@ -169,8 +70,8 @@ def compute(
         x_w = x + wx * config.warp_strength
         y_w = y + wy * config.warp_strength
 
-        # Base elevation: fBm in [-1, 1] approx.
-        base = fbm(
+        # Base noise: fBm in roughly [-1, 1].
+        noise = fbm(
             noise_base, x_w, y_w,
             octaves=config.noise_octaves,
             lacunarity=config.noise_lacunarity,
@@ -178,10 +79,10 @@ def compute(
             base_frequency=config.noise_base_frequency,
         )
 
-        # Ridge contribution: high-frequency multifractal ridges, gated by
-        # base elevation so ridges only appear in already-high terrain.
-        if base > config.ridge_threshold:
-            gate = min(1.0, (base - config.ridge_threshold) / (1.0 - config.ridge_threshold))
+        # Ridged contribution, gated by base elevation so ridges only appear
+        # in already-high terrain (avoids ridged crinkles in ocean basins).
+        if noise > config.ridge_threshold:
+            gate = min(1.0, (noise - config.ridge_threshold) / (1.0 - config.ridge_threshold))
             ridge = ridged_fbm(
                 noise_ridge, x_w, y_w,
                 octaves=config.ridge_octaves,
@@ -189,34 +90,22 @@ def compute(
                 persistence=config.noise_persistence,
                 base_frequency=config.noise_base_frequency * 1.5,
             )
-            base = base + gate * ridge * config.ridge_amplitude
+            noise = noise + gate * ridge * config.ridge_amplitude
 
-        # Continent mask: signed adjustment shaping the macro layout. Analytic
-        # modes (radial/axial/dual) return negative pull-down; plates returns
-        # signed bias from baseline + boundary effects. Added directly to fBm.
-        adjustment = _continent_mask_value(h, radius, config, theta, plate_field)
-        base = base + adjustment * config.mask_strength
+        baseline_norm = (
+            (lithosphere.elevation_km[h] - sea_level_km) / config.max_elevation_km
+        )
+        # Convex blend: tectonics weight `blend`, noise weight `1 - blend`.
+        elevation[h] = blend * baseline_norm + (1.0 - blend) * noise
 
-        elevation[h] = base
+    # Sea level is baked into the normalization above (0 ≡ sea_level_km).
+    sea_level = 0.0
 
-    # Sea level by quantile so target land fraction is met exactly.
-    values = sorted(elevation.values())
-    n = len(values)
-    ocean_count = int(round((1.0 - config.land_fraction) * n))
-    ocean_count = max(0, min(n - 1, ocean_count))
-    sea_level = values[ocean_count]
-
-    # Normalize peak land elevation to ≤ 1.0. The rest of the pipeline (lapse
-    # rate, biome elevation thresholds, crop ``elev_max`` gates) is calibrated
-    # assuming ``elevation - sea_level`` lies in roughly [0, 1] for land, with
-    # 1.0 meaning ``max_elevation_km`` (~4.5 km, a tall mountain peak). Plates
-    # add a continental/oceanic baseline plus boundary uplift on top of the
-    # fBm field, which can push peaks well past 1.0 (1.2–1.4 with the default
-    # presets) — that would make every mountain register as 6+ km tall and
-    # 40 °C colder than its latitude. Rescaling here keeps the field's shape
-    # intact while restoring the downstream calibration. No-op when the peak
-    # is already ≤ 1.0 (analytic mask modes, archipelago, etc.).
-    max_above = max(0.0, values[-1] - sea_level)
+    # Clip peak land elevation to ≤ 1.0 so downstream layers (lapse rate,
+    # biome elevation thresholds) keep their calibration. Tectonic collisions
+    # can produce columns thicker than ``max_elevation_km`` suggests.
+    sorted_vals = sorted(elevation.values())
+    max_above = max(0.0, sorted_vals[-1] - sea_level)
     if max_above > 1.0:
         scale = 1.0 / max_above
         for h, v in elevation.items():

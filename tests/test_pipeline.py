@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from worldgen import generate
 from worldgen.pipeline import GeneratedWorld
-from worldgen.types import WorldgenConfig
+from worldgen.types import WorldgenConfig, WorldShape
+from worldgen.world import rect_world_hexes
 
 
-def test_pipeline_deterministic(default_worldgen_config: WorldgenConfig) -> None:
-    """Same (seed, config, radius) produces byte-identical output."""
-    a = generate(radius=12, config=default_worldgen_config, seed=42)
-    b = generate(radius=12, config=default_worldgen_config, seed=42)
+def _shape(side_km: float) -> WorldShape:
+    return WorldShape(width_km=side_km, height_km=side_km)
+
+
+def test_pipeline_deterministic(small_world_config: WorldgenConfig) -> None:
+    """Same (seed, config) produces byte-identical output."""
+    a = generate(config=small_world_config, seed=42)
+    b = generate(config=small_world_config, seed=42)
     for h in a.hexes:
         da, db = a.hexes[h], b.hexes[h]
         assert da.elevation == db.elevation
@@ -23,10 +30,10 @@ def test_pipeline_deterministic(default_worldgen_config: WorldgenConfig) -> None
         assert da.biome == db.biome
 
 
-def test_pipeline_different_seeds(default_worldgen_config: WorldgenConfig) -> None:
+def test_pipeline_different_seeds(small_world_config: WorldgenConfig) -> None:
     """Different seeds → different worlds."""
-    a = generate(radius=12, config=default_worldgen_config, seed=42)
-    b = generate(radius=12, config=default_worldgen_config, seed=7)
+    a = generate(config=small_world_config, seed=42)
+    b = generate(config=small_world_config, seed=7)
     diffs = sum(1 for h in a.hexes if a.hexes[h].biome != b.hexes[h].biome)
     assert diffs > 50  # most hexes differ
 
@@ -50,15 +57,21 @@ def test_pipeline_produces_rivers(medium_world: GeneratedWorld) -> None:
     assert river_count > 0
 
 
-def test_pipeline_hex_count_matches_radius(default_worldgen_config: WorldgenConfig) -> None:
-    """A hex grid of radius R contains 3R² + 3R + 1 hexes."""
-    for r in (3, 5, 8):
-        gen = generate(radius=r, config=default_worldgen_config, seed=42)
-        expected = 3 * r * r + 3 * r + 1
+def test_pipeline_hex_count_matches_world_shape(
+    default_worldgen_config: WorldgenConfig,
+) -> None:
+    """Pipeline assembles HexData for every hex in the rectangular world's
+    footprint — and only those — so ``len(gen.hexes)`` equals
+    ``len(rect_world_hexes(shape, hex_size_km))``."""
+    for side_km in (50.0, 80.0, 130.0):
+        cfg = replace(default_worldgen_config, world=_shape(side_km))
+        gen = generate(config=cfg, seed=42)
+        expected = len(rect_world_hexes(cfg.world, cfg.hex_size_km))
         assert len(gen.hexes) == expected
 
 
-def test_pipeline_runs_at_radius_one(default_worldgen_config: WorldgenConfig) -> None:
-    """A radius-1 world (7 hexes) shouldn't crash — useful as a smoke test."""
-    gen = generate(radius=1, config=default_worldgen_config, seed=42)
-    assert len(gen.hexes) == 7
+def test_pipeline_runs_at_tiny_world(default_worldgen_config: WorldgenConfig) -> None:
+    """A tiny world (a handful of hexes) shouldn't crash — useful smoke test."""
+    cfg = replace(default_worldgen_config, world=_shape(20.0))
+    gen = generate(config=cfg, seed=42)
+    assert len(gen.hexes) > 0

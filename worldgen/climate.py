@@ -15,40 +15,66 @@ from __future__ import annotations
 import math
 from collections import deque
 
+from worldgen._log import progress
 from worldgen.rng import RngHierarchy
 from worldgen.hex import Hex
 from worldgen.noise import PerlinNoise2D
+from worldgen.ocean import OceanLayer
 from worldgen.types import (
     ClimateLayer,
     ElevationLayer,
     SeaLayer,
     WorldgenConfig,
 )
+from worldgen.world import map_half_extents_km
 
 _SQRT3 = math.sqrt(3.0)
 
 
-def _latitude_fraction(h: Hex, radius: int) -> float:
-    """Normalized latitude in [-1, 1]: equator = 0, poles = ±1.
+def hex_latitude_deg(
+    h: Hex, half_height_km: float, config: WorldgenConfig,
+) -> float:
+    """Geographic latitude (degrees) the hex occupies on the planet.
 
-    Uses the ``r`` axial coordinate as latitude axis (north → r negative).
+    The map's pixel-y axis is a slice of the planet's latitude range:
+    ``y = -half_height_km`` sits at ``map_lat_max`` (north edge),
+    ``y = +half_height_km`` at ``map_lat_min`` (south edge). The slice's
+    km extent is independent of how many degrees of latitude it spans —
+    the user is free to simulate a 1000-km-tall map covering 1° or 60° of
+    latitude alike.
+
+    ``half_height_km`` is derived by the caller from the hex set's
+    pixel-y bounding box (via ``world.map_half_extents_km``) so this
+    function doesn't need the world's configured shape.
     """
-    if radius == 0:
-        return 0.0
-    return max(-1.0, min(1.0, h.r / radius))
+    if half_height_km <= 0:
+        return 0.5 * (config.map_lat_min + config.map_lat_max)
+    pixel_y_km = _SQRT3 * (h.r + h.q / 2.0) * config.hex_size_km
+    fraction_south = (pixel_y_km + half_height_km) / (2.0 * half_height_km)
+    fraction_south = max(0.0, min(1.0, fraction_south))
+    return (
+        config.map_lat_max
+        - fraction_south * (config.map_lat_max - config.map_lat_min)
+    )
 
 
 def compute_temperature(
     elevation: ElevationLayer,
-    radius: int,
+    sea: SeaLayer,
+    ocean: OceanLayer,
+    half_height_km: float,
     config: WorldgenConfig,
     rng: RngHierarchy,
 ) -> dict[Hex, float]:
     """Per-hex annual mean temperature in °C.
 
-    T = base_by_latitude − elevation_above_sea_in_km · lapse_rate + small_noise
-    Sub-sea elevations are clamped to 0 km for the lapse term so ocean stays
-    close to its latitudinal baseline.
+    Ocean hex T = latitudinal baseline + ``ocean.current_temp_anomaly``
+    Land hex T = latitudinal baseline + ``ocean.coastal_temp_anomaly``
+                 − lapse(elev above sea) + small Perlin noise
+
+    The current and coastal anomalies are pre-computed by the ocean layer:
+    warm western-boundary currents push the adjacent coastline above the
+    pure-latitude baseline, cold eastern-boundary currents push it below.
     """
     temp_noise = PerlinNoise2D.from_rng(rng.child("worldgen", "climate", "temp_noise"))
     eq = config.equator_temp_c
@@ -56,75 +82,72 @@ def compute_temperature(
 
     temperatures: dict[Hex, float] = {}
     for h, elev in elevation.elevation.items():
-        lat_abs = abs(_latitude_fraction(h, radius))
-        # cosine-like latitudinal gradient (slightly fatter equatorial band).
-        latitudinal = eq + (pole - eq) * (lat_abs**1.3)
+        lat_deg = hex_latitude_deg(h, half_height_km, config)
+        polar_fraction = min(1.0, abs(lat_deg) / 90.0)
+        latitudinal = eq + (pole - eq) * (polar_fraction**1.3)
+
+        if sea.is_ocean.get(h, False):
+            ocean_anomaly = ocean.current_temp_anomaly.get(h, 0.0)
+            n = temp_noise.sample(h.q * 0.04, h.r * 0.04)
+            temperatures[h] = (
+                latitudinal + ocean_anomaly + n * config.temp_noise_amplitude
+            )
+            continue
 
         elev_above_sea = max(0.0, elev - elevation.sea_level)
-        # elev_above_sea is in normalized [0,1] units; multiply by max_elevation_km.
         km = elev_above_sea * config.max_elevation_km
         lapse = km * config.lapse_rate_c_per_km
-
-        # Small regional variation.
+        coastal_anomaly = ocean.coastal_temp_anomaly.get(h, 0.0)
         n = temp_noise.sample(h.q * 0.04, h.r * 0.04)
-
-        temperatures[h] = latitudinal - lapse + n * config.temp_noise_amplitude
+        temperatures[h] = (
+            latitudinal + coastal_anomaly - lapse + n * config.temp_noise_amplitude
+        )
     return temperatures
 
 
-def _zonal_wind_cartesian(latitude: float) -> tuple[float, float]:
+# Wind-band boundaries in geographic latitude (degrees). Earth-like:
+#   |lat| ∈ [ 0°, 30°] → trade easterlies (wind blows east → west)
+#   |lat| ∈ [30°, 60°] → westerlies (west → east)
+#   |lat| ∈ [60°, 90°] → polar easterlies (east → west)
+_WIND_BAND_LO_DEG = 30.0
+_WIND_BAND_HI_DEG = 60.0
+# Half-width of the smoothstep transition zone at each band boundary, in
+# degrees. Wider than Earth's real polar-front zone but enough to suppress
+# the "sharp line of opposite winds" artifact the hard step produced.
+_WIND_TRANSITION_HALF_WIDTH_DEG = 3.6
+
+
+def _zonal_wind_cartesian(lat_deg: float) -> tuple[float, float]:
     """Base prevailing wind unit vector by latitude band, in *cartesian*
     screen space (``+x`` = right, ``+y`` = down — matches the renderer).
-
-    Latitude is normalized in [-1, 1]. Bands (Earth-like):
-      |lat| in [0.0, 0.33]   → trade easterlies (wind blows east → west)
-      |lat| in [0.33, 0.66]  → westerlies (west → east)
-      |lat| in [0.66, 1.00]  → polar easterlies (east → west)
-
-    The east/west sign transitions smoothly across a narrow band around the
-    boundary latitudes (smoothstep over ±_TRANSITION_HALF_WIDTH). A hard
-    step at the boundaries — which is what the prior version had — produced
-    visible sharp lines in the precipitation map where adjacent hexes
-    suddenly had opposite winds; on the real Earth the transition zone is
-    a few degrees of latitude wide (the polar front, the subtropical jet).
     """
-    a = abs(latitude)
-    sign = _zonal_wind_sign(a)
+    sign = _zonal_wind_sign(abs(lat_deg))
     return (sign, 0.0)
 
 
-# Half-width of the smoothstep transition zone at each band boundary, in
-# units of normalized latitude. 0.04 ≈ 4° on Earth's 90° pole-to-equator
-# span — wider than the real polar front but enough to remove the artifact.
-_TRANSITION_HALF_WIDTH = 0.04
+def _zonal_wind_sign(lat_abs_deg: float) -> float:
+    """E-W wind sign as a continuous function of |latitude| in degrees.
 
-
-def _zonal_wind_sign(lat_abs: float) -> float:
-    """E-W wind sign as a continuous function of |latitude|.
-
-    Returns −1 (easterly) for |lat| < 0.33 and |lat| > 0.66, +1 (westerly)
-    in between, with smoothstep transitions at the two band boundaries.
+    Returns −1 (easterly) below 30° and above 60°, +1 (westerly) in
+    between, with smoothstep transitions at the two band boundaries.
     """
     def smoothstep(t: float) -> float:
         t = max(0.0, min(1.0, t))
         return t * t * (3.0 - 2.0 * t)
 
-    w = _TRANSITION_HALF_WIDTH
-    # Below the first transition zone — pure trade-easterlies.
-    if lat_abs <= 0.33 - w:
+    w = _WIND_TRANSITION_HALF_WIDTH_DEG
+    lo = _WIND_BAND_LO_DEG
+    hi = _WIND_BAND_HI_DEG
+    if lat_abs_deg <= lo - w:
         return -1.0
-    # Inside the lower transition: smoothly flip from −1 to +1.
-    if lat_abs < 0.33 + w:
-        t = (lat_abs - (0.33 - w)) / (2.0 * w)
+    if lat_abs_deg < lo + w:
+        t = (lat_abs_deg - (lo - w)) / (2.0 * w)
         return -1.0 + 2.0 * smoothstep(t)
-    # Inside the westerlies band proper.
-    if lat_abs <= 0.66 - w:
+    if lat_abs_deg <= hi - w:
         return 1.0
-    # Inside the upper transition: smoothly flip from +1 back to −1.
-    if lat_abs < 0.66 + w:
-        t = (lat_abs - (0.66 - w)) / (2.0 * w)
+    if lat_abs_deg < hi + w:
+        t = (lat_abs_deg - (hi - w)) / (2.0 * w)
         return 1.0 - 2.0 * smoothstep(t)
-    # Polar easterlies.
     return -1.0
 
 
@@ -233,7 +256,7 @@ def _compute_sea_breeze_field(
 
 def _per_hex_wind_theta(
     h: Hex,
-    radius: int,
+    half_height_km: float,
     sea_breeze_field: dict[Hex, tuple[float, float, float]],
     jitter_noise: PerlinNoise2D,
     config: WorldgenConfig,
@@ -243,8 +266,8 @@ def _per_hex_wind_theta(
     = normalize(zonal + sea_breeze_strength · onshore_unit · sea_breeze_falloff)
       rotated by Perlin jitter ∈ ±wind_jitter_amplitude_deg.
     """
-    lat = _latitude_fraction(h, radius)
-    base_x, base_y = _zonal_wind_cartesian(lat)
+    lat_deg = hex_latitude_deg(h, half_height_km, config)
+    base_x, base_y = _zonal_wind_cartesian(lat_deg)
     sb_x, sb_y, sb_strength = sea_breeze_field.get(h, (0.0, 0.0, 0.0))
     wx = base_x + sb_x * sb_strength * config.sea_breeze_strength
     wy = base_y + sb_y * sb_strength * config.sea_breeze_strength
@@ -302,11 +325,37 @@ def _moisture_along_path(
     return deposited_here
 
 
+def compute_wind_directions(
+    elevation: ElevationLayer,
+    sea: SeaLayer,
+    half_height_km: float,
+    config: WorldgenConfig,
+    rng: RngHierarchy,
+) -> dict[Hex, tuple[float, float]]:
+    """Per-hex wind direction as a unit vector in cartesian screen space.
+
+    Combines zonal latitude band + sea-breeze onshore component + Perlin
+    jitter (the same combination ``compute_precipitation`` consumes). Run
+    once and reused so both the moisture sweep and the wind preview see the
+    same field.
+    """
+    jitter_noise = PerlinNoise2D.from_rng(rng.child("worldgen", "climate", "wind_jitter"))
+    sea_breeze_field = _compute_sea_breeze_field(elevation, sea, config)
+    out: dict[Hex, tuple[float, float]] = {}
+    for h in elevation.elevation:
+        theta = _per_hex_wind_theta(
+            h, half_height_km, sea_breeze_field, jitter_noise, config,
+        )
+        out[h] = (math.cos(theta), math.sin(theta))
+    return out
+
+
 def compute_precipitation(
     elevation: ElevationLayer,
     sea: SeaLayer,
+    ocean: OceanLayer,
+    wind_direction: dict[Hex, tuple[float, float]],
     temperatures: dict[Hex, float],
-    radius: int,
     config: WorldgenConfig,
     rng: RngHierarchy,
 ) -> dict[Hex, float]:
@@ -321,23 +370,31 @@ def compute_precipitation(
     over land.
     """
     precip_noise = PerlinNoise2D.from_rng(rng.child("worldgen", "climate", "precip_noise"))
-    jitter_noise = PerlinNoise2D.from_rng(rng.child("worldgen", "climate", "wind_jitter"))
 
-    max_steps = min(config.wind_reach_hexes, max(40, radius * 2))
-
-    sea_breeze_field = _compute_sea_breeze_field(elevation, sea, config)
+    # Cap the upwind walk at the world's longest dimension (derived from
+    # the input hex set's bounding box), so we don't loop forever on a
+    # small test world but cover the full map on a large one.
+    half_w, half_h = map_half_extents_km(
+        elevation.elevation.keys(), config.hex_size_km,
+    )
+    world_span_km = 2.0 * max(half_w, half_h)
+    span_hexes = max(40, int(world_span_km / config.hex_size_km))
+    max_steps = min(config.wind_reach_hexes, span_hexes)
 
     n_paths = max(1, config.wind_path_samples)
     spread_rad = math.radians(config.wind_path_spread_deg)
 
     precipitation: dict[Hex, float] = {}
-    for h in elevation.elevation:
+    for h in progress(
+        elevation.elevation,
+        desc="precipitation",
+        total=len(elevation.elevation),
+    ):
         if sea.is_ocean[h]:
             precipitation[h] = 0.0
             continue
-        base_theta = _per_hex_wind_theta(
-            h, radius, sea_breeze_field, jitter_noise, config,
-        )
+        dx, dy = wind_direction[h]
+        base_theta = math.atan2(dy, dx)
         # Sample N angles evenly spread across the cone, average their deposits.
         total = 0.0
         for i in range(n_paths):
@@ -352,7 +409,15 @@ def compute_precipitation(
         deposited = total / n_paths
 
         n = precip_noise.sample(h.q * 0.03, h.r * 0.03)
-        base = config.precip_base * 0.15  # soft floor over land
+        # Continentality: drier baseline far from any ocean. The upwind
+        # moisture sweep already drops precip in continental interiors, but
+        # this damps the *floor* too so deep interiors don't get a uniform
+        # "minimum 240 mm" carpet they shouldn't have.
+        d_to_ocean = ocean.distance_to_ocean_km.get(h, 0.0)
+        continentality = math.exp(
+            -d_to_ocean / config.ocean.continentality_dry_scale_km
+        )
+        base = config.precip_base * 0.15 * continentality
         value = base + deposited + n * config.precip_noise_amplitude
         precipitation[h] = max(0.0, value)
 
@@ -394,11 +459,31 @@ def _smooth_precipitation(
 def compute(
     elevation: ElevationLayer,
     sea: SeaLayer,
-    radius: int,
+    ocean: OceanLayer,
     config: WorldgenConfig,
     rng: RngHierarchy,
 ) -> ClimateLayer:
-    """Compute temperature then precipitation. Precipitation depends on temperature."""
-    temperatures = compute_temperature(elevation, radius, config, rng)
-    precipitation = compute_precipitation(elevation, sea, temperatures, radius, config, rng)
-    return ClimateLayer(temperature_c=temperatures, precipitation_mm=precipitation)
+    """Compute temperature, wind directions, then precipitation.
+
+    Derives the map's vertical half-extent (for latitude mapping) from
+    the elevation layer's hex set once, then threads it through the
+    sub-steps. No reference to ``config.world`` — the input hex set
+    *is* the map.
+    """
+    _half_w, half_h = map_half_extents_km(
+        elevation.elevation.keys(), config.hex_size_km,
+    )
+    temperatures = compute_temperature(
+        elevation, sea, ocean, half_h, config, rng,
+    )
+    wind_direction = compute_wind_directions(
+        elevation, sea, half_h, config, rng,
+    )
+    precipitation = compute_precipitation(
+        elevation, sea, ocean, wind_direction, temperatures, config, rng,
+    )
+    return ClimateLayer(
+        temperature_c=temperatures,
+        precipitation_mm=precipitation,
+        wind_direction=wind_direction,
+    )

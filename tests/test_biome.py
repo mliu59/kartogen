@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
+import pytest
+
+from worldgen import generate
 from worldgen.terrain import TERRAIN_NAMES
 from worldgen import biome as biome_layer
 from worldgen.pipeline import GeneratedWorld
@@ -16,11 +21,27 @@ def test_every_biome_name_is_known(small_world: GeneratedWorld) -> None:
         assert d.biome in known
 
 
-def test_polar_hexes_are_tundra_or_snow_or_water(medium_world: GeneratedWorld) -> None:
-    """At |latitude| > 0.85 of radius, land hexes are tundra or snow (no jungle/savanna)."""
-    radius = medium_world.radius
-    for h, d in medium_world.hexes.items():
-        if abs(h.r) <= radius * 0.85:
+@pytest.fixture(scope="module")
+def pole_to_pole_world(medium_world_config: WorldgenConfig) -> GeneratedWorld:
+    """A medium world with a true pole-to-pole latitude window so polar
+    hexes actually sit at near-90° latitude. (The bundled config uses an
+    asymmetric mid-latitude slice.)"""
+    cfg = replace(medium_world_config, map_lat_min=-90.0, map_lat_max=90.0)
+    return generate(config=cfg, seed=42)
+
+
+def test_polar_hexes_are_tundra_or_snow_or_water(
+    pole_to_pole_world: GeneratedWorld,
+) -> None:
+    """At |latitude| > 75°, land hexes must be tundra / snow / cold-band biomes
+    (no jungle / savanna / plains). Uses a pole-to-pole world so this test
+    isn't fooled by an asymmetric latitude window in the bundled config."""
+    from worldgen.climate import hex_latitude_deg
+    from worldgen.world import map_half_extents_km
+    cfg = pole_to_pole_world.config
+    _, half_h = map_half_extents_km(pole_to_pole_world.hexes.keys(), cfg.hex_size_km)
+    for h, d in pole_to_pole_world.hexes.items():
+        if abs(hex_latitude_deg(h, half_h, cfg)) <= 75.0:
             continue
         if d.is_ocean:
             continue

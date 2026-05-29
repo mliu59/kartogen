@@ -27,14 +27,47 @@ for hex_coord, data in world.hexes.items():
 
 `world` also exposes the intermediate layers (`world.elevation`, `world.sea`, `world.climate`, `world.hydrology`, `world.plates`) for inspection and rendering.
 
-## Preview
+## Export
+
+Generate + serialize + render in one go:
 
 ```bash
-python -m worldgen.preview --seed 42 --radius 80 --layer biome --out world.png
-python -m worldgen.preview --seed 42 --radius 80 --all --out out/
+python -m worldgen --seed 42 --radius 80 --out exports/
+python -m worldgen --seed 42 --radius 80 --out exports/ --stop-after ocean
 ```
 
-`--all` renders every standard layer.
+Produces `exports/seed42_r80_<YYYYMMDD-HHMMSS>/` containing:
+
+- `snapshot.json` — the serialized world
+- `layers/<name>.png` — one PNG per renderable layer (biome, elevation,
+  temperature, precipitation, flow, composite, currents, wind,
+  continentality, gyres, ocean_depth, plates, plates_t0)
+- `plates/plate_NN.png` — each plate's final-state (post-warp) footprint
+- `drift.gif` — animated drift of all plates over the simulated history
+
+`--stop-after STEP` runs the pipeline up to and including the named step
+(`plates`, `tectonics`, `elevation`, `sea`, `ocean`, `climate`,
+`hydrology`, `biome`) and only writes PNGs for layers whose source data
+is available. `-q` / `--quiet` silences the per-layer logs and progress
+bars; otherwise DEBUG-level output is on by default.
+
+From Python:
+
+```python
+from pathlib import Path
+from worldgen import export_world, serialize_world, save_snapshot
+
+# Full bundle (snapshot + PNGs):
+folder = export_world(radius=80, config=cfg, seed=42, output_root=Path("exports"))
+
+# Or just the serialization endpoint, no rendering:
+snap = serialize_world(world)
+save_snapshot(snap, Path("world.json"))
+```
+
+`WorldSnapshot` is a generic container — `metadata`, `hexes`, and `layers` are
+all open-ended dicts, so new per-hex fields or new layers added later don't
+require schema changes.
 
 ## Pipeline
 

@@ -1,19 +1,24 @@
 [project]
 name = "worldgen"
 version = "0.1.0"
-description = "Deterministic, layered hex-grid world generator (elevation, climate, hydrology, biomes, crops, resources)."
+description = "Deterministic, layered hex-grid world generator (elevation, climate, hydrology, biomes)."
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    # Pillow is required for the preview + export PNG rendering. The
+    # rendering layer is now part of the standard surface (export.py uses
+    # preview.render internally), so Pillow moves from `[preview]` extra to
+    # a core dependency.
+    "Pillow>=10.0",
+    # tqdm drives the per-layer progress bars when verbose logging is on.
+    # Pulled into core because the CLI is verbose by default.
+    "tqdm>=4.66",
+]
 
 [project.optional-dependencies]
-preview = [
-    "Pillow>=10.0",
-]
 dev = [
     "pytest>=8.0",
     "mypy>=1.10",
     "ruff>=0.4",
-    "Pillow>=10.0",
 ]
 
 [tool.setuptools.packages.find]

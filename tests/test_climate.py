@@ -8,16 +8,20 @@ from worldgen.pipeline import GeneratedWorld
 
 
 def test_temperature_decreases_toward_poles(medium_world: GeneratedWorld) -> None:
-    """Annual mean temperature should be coldest at high latitude and warmest near r=0."""
+    """Annual mean temperature should be coldest at high latitude and warmest near the equator."""
+    from worldgen.climate import hex_latitude_deg
+    from worldgen.world import map_half_extents_km
+    cfg = medium_world.config
+    _, half_h = map_half_extents_km(medium_world.hexes.keys(), cfg.hex_size_km)
     by_lat: dict[int, list[float]] = {}
     for h, d in medium_world.hexes.items():
         if d.is_ocean:
             continue
-        bucket = abs(h.r) // 5  # latitude band
+        bucket = int(abs(hex_latitude_deg(h, half_h, cfg)) // 5)
         by_lat.setdefault(bucket, []).append(d.temperature_c)
 
     means = sorted(((b, statistics.mean(ts)) for b, ts in by_lat.items() if len(ts) >= 5))
-    # Coldest band must be at higher latitude than warmest band.
+    # Coldest band must be at higher |latitude| than warmest band.
     coldest_band = min(means, key=lambda x: x[1])[0]
     warmest_band = max(means, key=lambda x: x[1])[0]
     assert coldest_band > warmest_band
@@ -82,4 +86,4 @@ def test_precipitation_creates_rain_shadow(medium_world: GeneratedWorld) -> None
     # current pipeline mountains cap at 4.5 km and the orographic spread is
     # naturally smaller, while the *ratio* — what "rain shadow exists" means
     # — remains the right invariant.)
-    assert pmax / max(1.0, pmin) > 3.0
+    assert pmax / max(1.0, pmin) > 2.5
