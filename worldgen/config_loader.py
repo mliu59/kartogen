@@ -11,31 +11,52 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tectonic_sim.config_loader import load_sim_config_from_path
 from worldgen.types import (
     OceanConfig,
     PlateConfig,
-    TectonicsConfig,
     WorldgenConfig,
     WorldShape,
 )
 
 
 def load_worldgen_config(path: Path) -> WorldgenConfig:
-    """Load a ``WorldgenConfig`` from a TOML file."""
+    """Load a ``WorldgenConfig`` from a TOML file.
+
+    The ``tectonics`` field is loaded from a separate
+    ``tectonic_sim.toml`` whose path is given (relative to the
+    worldgen.toml file) by the ``[worldgen].tectonic_sim_config`` key.
+    This keeps the tectonic-physics tunables in a single canonical file
+    that the polygon sim and worldgen both read.
+    """
     import tomllib
 
     with open(path, "rb") as f:
         raw = tomllib.load(f)
-    return parse_worldgen_config(raw["worldgen"])
+    wg = raw["worldgen"]
+    # Resolve relative path against the worldgen.toml file's directory.
+    tect_path_str = wg.get("tectonic_sim_config", "tectonic_sim.toml")
+    tect_path = (path.parent / tect_path_str).resolve()
+    sim_cfg = load_sim_config_from_path(tect_path)
+    return parse_worldgen_config(wg, sim_config=sim_cfg)
 
 
-def parse_worldgen_config(wg: dict[str, object]) -> WorldgenConfig:
+def parse_worldgen_config(
+    wg: dict[str, object],
+    *,
+    sim_config: object,
+) -> WorldgenConfig:
     """Parse a pre-loaded ``[worldgen]`` table into a ``WorldgenConfig``.
 
     Reads ``[worldgen.elevation]`` (with a nested ``plates`` sub-table) plus
-    the ``[worldgen.{climate,hydrology,biome,tectonics,ocean}]`` sections.
-    Every required field must be present — missing fields raise rather than
+    the ``[worldgen.{climate,hydrology,biome,ocean}]`` sections. Every
+    required field must be present — missing fields raise rather than
     silently defaulting.
+
+    ``sim_config`` is the already-loaded ``tectonic_sim.SimConfig`` — it
+    becomes ``WorldgenConfig.tectonics``. The tectonic-physics fields no
+    longer live in worldgen.toml; they live in
+    ``config/tectonic_sim.toml`` (pointed at by ``[worldgen].tectonic_sim_config``).
     """
     wg_elev = dict(wg.get("elevation", {}))  # type: ignore[arg-type]
     wg_clim = wg["climate"]  # type: ignore[index]
@@ -43,22 +64,23 @@ def parse_worldgen_config(wg: dict[str, object]) -> WorldgenConfig:
     wg_biome = wg["biome"]  # type: ignore[index]
 
     plates_cfg = _parse_plate_config(wg_elev)
-    tect_cfg = _parse_tectonics_config(wg.get("tectonics"))  # type: ignore[arg-type]
     ocean_cfg = _parse_ocean_config(wg.get("ocean"))  # type: ignore[arg-type]
     world_cfg = _parse_world_shape(wg.get("world"))  # type: ignore[arg-type]
     if (
-        plates_cfg is None or tect_cfg is None
-        or ocean_cfg is None or world_cfg is None
+        plates_cfg is None or ocean_cfg is None or world_cfg is None
     ):
         raise ValueError(
             "WorldgenConfig requires [worldgen.world], "
-            "[worldgen.elevation.plates], [worldgen.tectonics], and "
-            "[worldgen.ocean] tables."
+            "[worldgen.elevation.plates], and [worldgen.ocean] tables."
         )
 
     return WorldgenConfig(
         hex_size_km=wg["hex_size_km"],  # type: ignore[index]
         world=world_cfg,
+        # ``param_temperature`` is optional at load time — absent in the
+        # TOML means 0 (deterministic, no randomization). The user can
+        # also override it per-run via the CLI.
+        param_temperature=float(wg.get("param_temperature", 0.0)),  # type: ignore[union-attr]
         feature_wavelength_km=wg_elev["feature_wavelength_km"],
         noise_octaves=wg_elev["noise_octaves"],
         noise_lacunarity=wg_elev["noise_lacunarity"],
@@ -70,7 +92,7 @@ def parse_worldgen_config(wg: dict[str, object]) -> WorldgenConfig:
         ridge_threshold=wg_elev["ridge_threshold"],
         tectonic_blend_weight=wg_elev["tectonic_blend_weight"],
         plates=plates_cfg,
-        tectonics=tect_cfg,
+        tectonics=sim_config,
         ocean=ocean_cfg,
         map_lat_min=float(wg_clim["map_lat_min"]),  # type: ignore[arg-type]
         map_lat_max=float(wg_clim["map_lat_max"]),  # type: ignore[arg-type]
@@ -165,36 +187,6 @@ def _parse_ocean_config(raw: dict[str, object] | None) -> OceanConfig | None:
     )
 
 
-def _parse_tectonics_config(raw: dict[str, object] | None) -> TectonicsConfig | None:
-    """Parse the ``[worldgen.tectonics]`` table.
-
-    Returns ``None`` if absent; ``parse_worldgen_config`` then raises.
-    """
-    if raw is None:
-        return None
-    if not isinstance(raw, dict):
-        raise TypeError(
-            f"`tectonics` must be a TOML table, got {type(raw).__name__}"
-        )
-    return TectonicsConfig(
-        n_ticks=int(raw["n_ticks"]),  # type: ignore[arg-type]
-        dt_myr=float(raw["dt_myr"]),  # type: ignore[arg-type]
-        sea_level_km=float(raw["sea_level_km"]),  # type: ignore[arg-type]
-        plate_speed_kmpy=float(raw["plate_speed_kmpy"]),  # type: ignore[arg-type]
-        continental_thickness_km=float(raw["continental_thickness_km"]),  # type: ignore[arg-type]
-        oceanic_thickness_km=float(raw["oceanic_thickness_km"]),  # type: ignore[arg-type]
-        rift_thickness_km=float(raw["rift_thickness_km"]),  # type: ignore[arg-type]
-        ridge_depth_km=float(raw["ridge_depth_km"]),  # type: ignore[arg-type]
-        ridge_subsidence_rate=float(raw["ridge_subsidence_rate"]),  # type: ignore[arg-type]
-        max_ocean_depth_km=float(raw["max_ocean_depth_km"]),  # type: ignore[arg-type]
-        continental_reference_thickness_km=float(raw["continental_reference_thickness_km"]),  # type: ignore[arg-type]
-        continental_isostasy_factor=float(raw["continental_isostasy_factor"]),  # type: ignore[arg-type]
-        orogeny_uplift_per_overlap_km=float(raw["orogeny_uplift_per_overlap_km"]),  # type: ignore[arg-type]
-        folding_ratio=float(raw["folding_ratio"]),  # type: ignore[arg-type]
-        subduction_arc_uplift_km=float(raw["subduction_arc_uplift_km"]),  # type: ignore[arg-type]
-        erosion_period=int(raw["erosion_period"]),  # type: ignore[arg-type]
-        erosion_strength=float(raw["erosion_strength"]),  # type: ignore[arg-type]
-        boundary_warp_strength=float(raw["boundary_warp_strength"]),  # type: ignore[arg-type]
-        boundary_warp_wavelength_km=float(raw["boundary_warp_wavelength_km"]),  # type: ignore[arg-type]
-        snapshot_period_ticks=int(raw["snapshot_period_ticks"]),  # type: ignore[arg-type]
-    )
+# `_parse_tectonics_config` was deleted in the polygon-sim refactor.
+# Tectonic physics tunables live in ``config/tectonic_sim.toml`` and
+# are loaded by ``load_sim_config_from_path``. See ``load_worldgen_config``.

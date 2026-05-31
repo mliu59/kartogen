@@ -344,10 +344,14 @@ def _render_plates(
     img = Image.new("RGB", (w, h), color=(20, 20, 30))
     draw = ImageDraw.Draw(img)
 
-    field = gen.plates
-    plate_by_id = {p.id: p for p in field.plates}
     if gen.lithosphere is None:
         raise ValueError("plates layer requires tectonics step")
+    # Use the SIMULATED plates as source of truth — their ids match
+    # ``final_pid`` (both come from the same tectonic_sim run). After
+    # param-temperature randomization the simulated plate_count may
+    # differ from worldgen's t=0 ``PlateField``, so using
+    # ``gen.plates.plates`` would KeyError on extra ids.
+    plate_by_id = {p.id: p for p in gen.lithosphere.plates}
     final_pid = gen.lithosphere.plate_id
     world_hexes = _world_hexes(gen)
     world_hex_set = set(world_hexes)
@@ -359,8 +363,11 @@ def _render_plates(
         if pid < 0:
             color = (20, 20, 30)
         else:
-            plate = plate_by_id[pid]
-            is_oceanic = plate.type == "oceanic"
+            plate = plate_by_id.get(pid)
+            # If the plate id was sampled from a particle that's since
+            # been subducted between the snapshot and the sample (very
+            # rare; defensive), fall back to continental colouring.
+            is_oceanic = plate is not None and plate.initial_type == "oceanic"
             color = _plate_color(pid, is_oceanic)
         # Boundary = any in-bounds neighbor has a different final pid.
         on_boundary = any(
@@ -393,10 +400,13 @@ def _render_plates(
             font = ImageFont.truetype("arial.ttf", 11)
         except OSError:
             font = ImageFont.load_default()
-        n_continental = sum(1 for p in field.plates if p.type == "continental")
-        n_oceanic = sum(1 for p in field.plates if p.type == "oceanic")
+        # Iterate the simulated plate set — `TectonicPlate.initial_type`
+        # rather than worldgen `Plate.type`.
+        sim_plates = gen.lithosphere.plates
+        n_continental = sum(1 for p in sim_plates if p.initial_type == "continental")
+        n_oceanic = sum(1 for p in sim_plates if p.initial_type == "oceanic")
         caption = (
-            f"plates (final state): {len(field.plates)}   "
+            f"plates (final state): {len(sim_plates)}   "
             f"continental: {n_continental}   oceanic: {n_oceanic}   "
             f"(white dots = current plate centres after drift)"
         )
@@ -406,13 +416,13 @@ def _render_plates(
         # match the colors on the map to a numeric id.
         swatch = 14
         gap = 2
-        col_h = (swatch + gap) * len(field.plates)
+        col_h = (swatch + gap) * len(sim_plates)
         y0 = h - 10 - col_h
-        for i, plate in enumerate(field.plates):
+        for i, plate in enumerate(sim_plates):
             yy = y0 + i * (swatch + gap)
-            sw_color = _plate_color(plate.id, plate.type == "oceanic")
+            sw_color = _plate_color(plate.id, plate.initial_type == "oceanic")
             draw.rectangle([10, yy, 10 + swatch, yy + swatch], fill=sw_color)
-            label = f"#{plate.id} {plate.type[:4]}"
+            label = f"#{plate.id} {plate.initial_type[:4]}"
             draw.text(
                 (10 + swatch + 4, yy - 1), label,
                 fill=(220, 220, 220), font=font,
@@ -503,54 +513,34 @@ def render_single_plate(
     is irrelevant. ``hex_px`` is the per-hex pixel scale, held constant
     across plates so side-by-side comparison reveals true relative size.
 
-    Source data, in preference order:
-
-    1. The last frame of ``gen.lithosphere.history`` (plate-local owned
-       hexes + per-hex crust type at t=N). This is the plate's "natural"
-       shape in its own coordinate system; off-map portions are included
-       because plate-local space isn't clipped to the world.
-    2. ``gen.lithosphere.plate_id`` (final world-state assignment), with
-       hex positions shifted so the bounding box centre is at canvas
-       centre. Used only when ``snapshot_period_ticks == 0`` so no
-       history was captured. This view is post-Perlin-boundary-warp but
-       loses any hexes that ran off-map.
-
-    Continental hexes are coloured in the plate's palette colour; oceanic
-    hexes (rift / fresh oceanic crust acquired during the sim) use the
-    darker oceanic variant.
+    The plate's footprint is the set of final-state world hexes assigned
+    to ``plate_id``; each hex carries the crust type it ended up with
+    after the sim. Continental hexes are coloured in the plate's palette
+    colour; oceanic hexes (rift / fresh oceanic crust acquired during
+    the sim) use the darker oceanic variant.
     """
     if gen.lithosphere is None:
         raise ValueError("render_single_plate requires the tectonics step")
 
-    plate_by_id = {p.id: p for p in gen.plates.plates}
+    # Source plate metadata from the *simulated* plate set — under
+    # param_temperature randomization the simulated plate count can
+    # diverge from worldgen's t=0 ``PlateField``.
+    plate_by_id = {p.id: p for p in gen.lithosphere.plates}
     if plate_id not in plate_by_id:
         raise ValueError(f"plate {plate_id} not in this world")
     plate = plate_by_id[plate_id]
     cont_color = _plate_color(plate_id, False)
     ocn_color = _plate_color(plate_id, True)
 
-    # Collect (axial q, r, crust_type) tuples for the focal plate.
-    history = gen.lithosphere.history
-    if history:
-        last = history[-1]
-        local_hexes = last.plate_owned_local_hexes.get(plate_id, ())
-        crust_types = last.plate_owned_crust_type.get(plate_id, ())
-        cells: list[tuple[int, int, str]] = [
-            (h.q, h.r, ct) for h, ct in zip(local_hexes, crust_types)
-        ]
-        source_note = f"t={last.time_myr:.0f} Myr, plate-local"
-    else:
-        # Fallback: world hexes assigned to this plate, recentered so
-        # bounding-box centre is at the canvas centre. We can't
-        # reconstruct per-hex crust_type from final lithosphere here
-        # without an extra lookup, so default to continental colouring.
-        cells = [
-            (h.q, h.r,
-             gen.lithosphere.columns[h].crust_type)
-            for h in _world_hexes(gen)
-            if gen.lithosphere.plate_id.get(h) == plate_id
-        ]
-        source_note = "final world-state (no history captured)"
+    # Collect (axial q, r, crust_type) tuples for the focal plate: world
+    # hexes whose final assignment is this plate, recentered so the
+    # bounding-box centre lands at the canvas centre.
+    cells: list[tuple[int, int, str]] = [
+        (h.q, h.r, gen.lithosphere.columns[h].crust_type)
+        for h in _world_hexes(gen)
+        if gen.lithosphere.plate_id.get(h) == plate_id
+    ]
+    source_note = "final world-state"
 
     if not cells:
         # Edge case: a plate with no owned hexes (fully consumed by
@@ -611,7 +601,7 @@ def render_single_plate(
     bbox_w_km = (max_x - min_x + 1.0) * hex_size
     bbox_h_km = (max_y - min_y + 1.0) * hex_size
     caption = (
-        f"plate #{plate_id} {plate.type}   "
+        f"plate #{plate_id} {plate.initial_type}   "
         f"hexes: {len(cells)} (cont {cont_count} / ocn {ocn_count})   "
         f"bbox: {bbox_w_km:.0f}×{bbox_h_km:.0f} km   "
         f"[{source_note}]"
@@ -1010,99 +1000,6 @@ def _render_ocean_depth(
         )
         draw.text((10, 10), caption, fill=(240, 240, 240), font=font)
     return img
-
-
-def render_drift_animation(
-    gen: GeneratedWorld,
-    out_path: Path,
-    hex_px: float = 4.0,
-    frame_duration_ms: int = 200,
-) -> int:
-    """Write an animated GIF of the tectonic drift.
-
-    Reads ``gen.lithosphere.history`` (populated when
-    ``TectonicsConfig.snapshot_period_ticks > 0``). Each plate's *particles*
-    — its plate-local owned hexes — are drawn at their **continuous** world
-    pixel positions (= ``hex_to_pixel(plate_local_xy + plate.center_km)``).
-    Sub-pixel float coords mean plate motion slides smoothly between frames
-    instead of teleporting one integer hex at a time. The discretisation to
-    the hex grid happens only in ``_finalize`` at the end of the sim, not
-    per-frame.
-
-    Returns the number of frames written. Raises ``ValueError`` if no
-    history is present.
-    """
-    history = gen.lithosphere.history
-    if not history:
-        raise ValueError(
-            "no tectonic history captured — set "
-            "[worldgen.tectonics] snapshot_period_ticks > 0"
-        )
-
-    w, h, cx, cy = _figure_size(gen, hex_px)
-    initial_type = {p.id: p.type for p in gen.plates.plates}
-    hex_size = gen.config.hex_size_km
-    km_to_px = hex_px / hex_size  # cartesian km → cartesian pixels
-
-    try:
-        font = ImageFont.truetype("arial.ttf", 11)
-    except OSError:
-        font = ImageFont.load_default()
-
-    frames: list[Image.Image] = []
-    for frame in history:
-        img = Image.new("RGB", (w, h), color=(20, 20, 30))
-        draw = ImageDraw.Draw(img)
-
-        for pid, local_hexes in frame.plate_owned_local_hexes.items():
-            ptype = initial_type.get(pid, "continental")
-            crust_types = frame.plate_owned_crust_type[pid]
-            kcx, kcy = frame.plate_centers_km[pid]
-            # Pixel offset corresponding to this plate's continuous centre.
-            ox = cx + kcx * km_to_px
-            oy = cy + kcy * km_to_px
-            for local_hex, this_crust in zip(local_hexes, crust_types):
-                # Plate-local hex → its cartesian km in plate-local space
-                # (same projection the rest of the pipeline uses).
-                lx = 1.5 * local_hex.q * hex_size
-                ly = math.sqrt(3.0) * (local_hex.r + local_hex.q / 2.0) * hex_size
-                # Plate-local → world is *just* the centre offset (also in
-                # km). We render in pixels via `km_to_px`.
-                px = ox + lx * km_to_px
-                py = oy + ly * km_to_px
-                color = _plate_color(pid, this_crust == "oceanic")
-                draw.polygon(
-                    _hex_corners(px, py, hex_px), fill=color,
-                )
-
-        # Current plate centres as white dots.
-        for pid, (kx, ky) in frame.plate_centers_km.items():
-            px = cx + kx * km_to_px
-            py = cy + ky * km_to_px
-            r = max(2.0, hex_px * 0.45)
-            draw.ellipse(
-                [(px - r, py - r), (px + r, py + r)],
-                fill=(245, 245, 245), outline=(20, 20, 20),
-            )
-
-        caption = (
-            f"tick {frame.tick:>4}   t = {frame.time_myr:7.1f} Myr   "
-            f"plates: {len(frame.plate_centers_km)}   "
-            "(continuous-field render; hex cast at finalize)"
-        )
-        draw.text((10, 10), caption, fill=(230, 230, 230), font=font)
-        frames.append(img)
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    frames[0].save(
-        out_path,
-        save_all=True,
-        append_images=frames[1:],
-        duration=frame_duration_ms,
-        loop=0,
-        optimize=False,
-    )
-    return len(frames)
 
 
 def _draw_legend(

@@ -2,23 +2,27 @@
 
 This file is the project's memory and design contract. Read it fully before making any changes. When in doubt, the principles here override your defaults.
 
+When user instructions conflict with the principles here, raise them for review by asking clarification questions and pointing out discrepancies. 
+
+Technical implementation details should be self-documenting in the code itself. DO NOT add specifics of computational methods here. This memory document should only serve as a CONCISE high level overview of the concepts involved in this package. 
+
+DO NOT use this document as an active tracker for temporary status. Any temporary notes regarding the completion/pending status of tasks should go into a separate folder. Use `.claude`
+
 ## Project mission
 
-`worldgen` is a deterministic, layered hex-grid world generator: from a `(radius, config, seed)` triple it produces a `GeneratedWorld` containing per-hex elevation, sea/coast/lake/river flags, temperature, precipitation, and biome — plus the intermediate layer outputs needed for testing and rendering.
+`worldgen` is a deterministic, layered hex-grid world generator: from a `(config, seed)` pair it produces a `GeneratedWorld` containing per-hex elevation, sea/coast/lake/river flags, temperature, precipitation, and biome — plus the intermediate layer outputs needed for testing and rendering. The world is a rectangular footprint set by `[worldgen.world] width_km, height_km` (`WorldShape` in `worldgen.types`) — not a hex radius.
 
-A resource-and-crops layer existed previously (FAO-style envelopes + clustered Perlin deposits) but was removed pending a better approach.
-
-It was extracted from a larger agent-based macro-history simulator so the terrain pipeline can be developed, tested, and previewed on its own. The package has no runtime dependencies; the optional `[preview]` extra adds Pillow for PNG rendering.
+The package has no runtime dependencies; the optional `[preview]` extra adds Pillow for PNG rendering.
 
 ## Three commitments that override convenience
 
 These are non-negotiable and drive most architectural decisions:
 
-1. **Determinism / simulatability** — every output is a pure function of `(radius, config, seed)`. No `random.random()`, no `time.time()`, no unordered iteration over dicts that affects results. Each layer derives its child RNG by hashing the layer name into `RngHierarchy`, so adding a new layer or reordering layers within `pipeline.generate` never reshuffles existing seeds.
+1. **Determinism / simulatability** — every output is a pure function of `(config, seed)`. No `random.random()`, no `time.time()`, no unordered iteration over dicts that affects results. Each layer derives its child RNG by hashing the layer name into `RngHierarchy`, so adding a new layer or reordering layers within `pipeline.generate` never reshuffles existing seeds.
 
 2. **Interpretability** — the full result is inspectable. `GeneratedWorld` exposes both per-hex `HexData` and every intermediate layer (`ElevationLayer`, `SeaLayer`, `ClimateLayer`, `HydrologyLayer`, `PlateField | None`). Anything that affects the final map can be examined directly; nothing is hidden behind aggregated outputs.
 
-3. **Testability** — every deterministic function gets a unit test. Tests live under `tests/` and run without any heavy dependency (Pillow is only needed for `preview.py`, never imported by the layers themselves). Snapshot-style tests pin the final world hash for a fixed `(seed, radius, config)`; any change to outputs should be a conscious decision, not a surprise.
+3. **Testability** — every deterministic function gets a unit test. Tests live under `tests/` and run without any heavy dependency (Pillow is only needed for `preview.py`, never imported by the layers themselves). Snapshot-style tests pin the final world hash for a fixed `(config, seed)`; any change to outputs should be a conscious decision, not a surprise.
 
 If a design choice trades against any of these three, flag it and ask before proceeding.
 
@@ -26,9 +30,9 @@ If a design choice trades against any of these three, flag it and ask before pro
 
 **Pure functions, layer by layer.** Each layer is `compute(prior_layer_outputs, config, rng_child) → LayerOutput`. Mutation is fine inside a layer; the layer's inputs are treated as immutable. `pipeline.generate` is the only orchestrator.
 
-**Configuration over code.** Coefficients (noise frequencies, lapse rates, river thresholds, crop envelopes, deposit cluster parameters) live in `config/worldgen.toml`, not in code. The engine should be the same regardless of which world parameters are loaded. Adding a new crop or resource is a config-only change.
+**Configuration over code.** Coefficients (noise frequencies, lapse rates, river thresholds, crop envelopes, deposit cluster parameters) live in TOML configs in `config`, not in code. The engine should be the same regardless of which world parameters are loaded.
 
-**No backwards compatibility.** v0 is pre-release. When changing a feature, *change it*. Don't add fallback paths, default values to paper over missing fields, optional flags toggling old vs new behavior, or compatibility shims. If old call sites break, fix them.
+**No backwards compatibility.** When changing a feature, *change it*. Don't add fallback paths, default values to paper over missing fields, optional flags toggling old vs new behavior, or compatibility shims. If old call sites break, fix them.
 
 **Explicit data structures.** All state objects are `@dataclass(frozen=True)` in `worldgen/types.py`. No bare dicts for anything with a stable schema. No default values on dataclass fields whose meaning is non-trivial — missing-data bugs should surface at construction, not as silent zeros downstream.
 
@@ -44,7 +48,10 @@ worldgen/
 ├── config_loader.py   — TOML → WorldgenConfig
 ├── pipeline.py        — orchestrator; returns GeneratedWorld
 ├── plates.py          — L0a: t=0 plate seed placement + boundary classification
-├── tectonics.py       — L0b: time-stepped PlaTec-style simulation
+├── tectonics.py       — L0b: per-hex result types + adaptor that delegates
+│                         to tectonics_cast
+├── tectonics_cast.py  — Bridge: runs `tectonic_sim.polygon_sim`, samples
+│                         its final cell grid onto worldgen hexes
 ├── elevation.py       — L1: tectonic baseline + fBm/ridged detail + analytic mask
 ├── sea.py             — L2: ocean/coast mask
 ├── climate.py         — L3+L4: temperature + precipitation (wind sweep, orographic)
@@ -52,12 +59,12 @@ worldgen/
 ├── ocean.py           — L2.5: gyre-based currents + continentality (Tier 2)
 ├── biome.py           — L6: Whittaker(T, P) + elevation/coast/water overrides
 ├── preview.py         — Library: PNG renderer (requires Pillow), used by export
-└── export.py          — Public: WorldSnapshot container, serialize/save/load,
-                         and export_world (snapshot + per-layer PNGs to a
-                         timestamped folder)
+└── export.py          — Public: WorldSnapshot + serialize/save/load +
+                         export_world (snapshot + per-layer PNGs +
+                         tectonic_sim visualisation artefacts)
 ```
 
-Tests under `tests/` mirror the package; `conftest.py` exposes `default_worldgen_config`, `small_world` (radius 12, seed 42), and `medium_world` (radius 30, seed 42) session-scoped fixtures.
+Tests under `tests/` mirror the package; `conftest.py` exposes `default_worldgen_config`, `small_world` (120×120 km, seed 42), and `medium_world` (300×300 km, seed 42) session-scoped fixtures.
 
 ## World generation pipeline
 
@@ -65,7 +72,7 @@ Layer order — each layer is a pure function of all earlier layers' outputs plu
 
 ```
 seed + config
-  ↓ L0a plates         Voronoi plate seeding
+  ↓ L0a plates         Noise-applied weighted voronoi plate seeding
   ↓ L0b tectonics      time-stepped sim (n_ticks × dt_myr of geological time)
   ↓ L1  elevation      tectonic baseline (km) + fBm/ridged detail
   ↓ L2  sea level      ocean/coast mask (absolute sea_level_km)
@@ -80,117 +87,100 @@ GeneratedWorld
 
 ## Ocean layer (Tier 2 climate)
 
-`worldgen/ocean.py` runs between sea and climate, producing per-hex current
-directions and temperature anomalies. Annual-mean snapshot — no seasonality.
+`worldgen/ocean.py` runs between sea and climate, producing per-hex
+current directions and temperature anomalies as an annual-mean
+snapshot. It captures three coupled effects:
 
-**Gyres.** Each connected ocean basin is split by hemisphere into one or two
-gyres (CW rotation in NH, CCW in SH — the Coriolis sign). Per ocean hex,
-the current direction is the tangent of `(hex − gyre_centre)` rotated by
-the rotation sign.
+- **Gyres.** Each connected ocean basin is split into Coriolis-driven
+  rotating cells, one or two per hemisphere.
+- **Boundary-current anomaly.** Each ocean hex inherits a temperature
+  offset from the latitudinal context sampled upstream along its gyre
+  flow — the mechanism behind warm western-boundary and cold eastern-
+  boundary currents.
+- **Coastal pickup + continentality.** Land hexes within reach of the
+  ocean inherit a damped fraction of the local ocean anomaly; the
+  precipitation floor is damped by distance-to-ocean so deep continental
+  interiors don't carry an unrealistic moisture carpet.
 
-**Anomaly.** Single-pass formula: sample the planet's latitudinal
-temperature `current_persistence_km` upstream along the current; anomaly =
-`(upstream_temp − local_temp) × strength`, capped at `max_anomaly_c`. This
-reproduces warm western-boundary currents (Gulf Stream / Kuroshio) and cold
-eastern-boundary currents (California / Humboldt / Canary) without an
-explicit advection solver.
-
-**Coastal pickup.** BFS distance from every hex to the nearest ocean.
-Coastal land hexes inherit `ocean_anomaly × pickup_fraction × exp(-d/decay)`
-from the nearest ocean hex.
-
-**Continentality.** The precipitation floor is multiplied by
-`exp(-distance_to_ocean_km / continentality_dry_scale_km)`, drying deep
-continental interiors. The existing upwind moisture sweep continues to
-handle the dominant wind-driven drying — this term just damps the baseline
-floor so a 1500-km-inland hex doesn't get a uniform "240 mm minimum carpet"
-it shouldn't have.
-
-**Tier 2 deferrals.** No seasonal cycle (no monsoons, no winter sea-ice
-expansion), no pressure-field advection, no vegetation feedback. The
-single-pass anomaly model produces visible streaks where currents reverse
-between adjacent gyres; smoothing the field is a v2 task.
+This is a single-pass approximation. Seasonality, pressure-field
+advection, and vegetation feedback are not modelled.
 
 ## Tectonics layer
 
-When `mask_mode = "plates"`, the static Voronoi plate field becomes the t=0
-initial condition for a time-stepped PlaTec-style simulation. Each plate
-carries its own crust dictionary in plate-local hex coords; the plate's
-centre drifts in continuous km each tick; crust moves with the plate. Plates
-bounce off the world's circumscribed circle so they don't drift entirely
-off-disc (the hex disc isn't a torus).
+`worldgen.tectonics.simulate_tectonics` is a thin worldgen adaptor over
+the rigid-polygon `tectonic_sim.polygon_sim` package. It delegates to
+`worldgen.tectonics_cast.simulate_tectonics_via_continuous_sim`, which
+runs the polygon sim on a domain larger than the worldgen world (so
+plates have room to drift), samples the final cell grid at every
+world-hex centre, and packages the raw polygon-sim output onto
+`LithosphereState.raw_snapshot` for export-time renderers.
 
-Per-tick: advance plate positions → compute per-world-hex overlap →
-resolve collisions (subduction or continental folding) → seed fresh oceanic
-crust where plates have pulled apart → age all crust. Optional erosion
-(continental thickness blur) every `erosion_period` ticks.
+The polygon sim itself models plate kinematics, contention, fusion,
+rifting, accretion, hotspot volcanism, erosion, and connected-component
+culling as a per-tick pipeline. See `tectonic_sim/polygon_sim/` for the
+authoritative implementation; the worldgen side does not know or care
+about the per-tick order.
 
-After `n_ticks`, every world hex carries a `LithosphereColumn`
-(`crust_type`, `thickness_km`, `age_myr`). Elevation is derived:
+**Boundary mode is torus-only.** Every spatial query inside
+`tectonic_sim` uses the toroidal shortest-path metric.
 
-- Continental: `e_km = (thickness - reference) × continental_isostasy_factor`
-- Oceanic (half-space cooling): `e_km = -ridge_depth - subsidence_rate × √age`
-
-The configurable `sea_level_km` threshold separates land from ocean. In
-`plates` mode this absolute value is the contract, not the analytic-mode
-`land_fraction` quantile.
+**Single source of truth for configuration.** `config/tectonic_sim.toml`
+holds every tunable for the polygon sim. Worldgen reads it directly
+(path from `[worldgen].tectonic_sim_config` in `worldgen.toml`) and
+assigns the resulting `SimConfig` to `WorldgenConfig.tectonics`.
+`TectonicsConfig` in `worldgen.types` is a transparent alias for
+`SimConfig`; there is no second source of tectonic-sim tunables.
 
 **Sea level is decoupled from crust dynamics.** `sea_level_km` is a
-passive sampling threshold + the elevation-render colormap midpoint;
-nothing in the collision / drift / divergent-fill / contact-constraint
-pipeline reads it. Particles know their thickness, age, type, plate, and
-position — not whether they're "above water." The isostasy module returns
-signed elevation in km from a mantle reference, and sea level is just the
-water line on that signed axis. The payoff is that two natural sweeps
-come for free:
+passive sampling threshold + elevation-render colormap midpoint;
+nothing in the per-tick polygon sim reads it. Cells carry thickness,
+age, crust type, and plate id — not "above water." Isostasy returns
+signed elevation in km from a mantle reference, and sea level is just
+the water line on that signed axis. The payoff is that two natural
+sweeps come for free:
 
-  - **Hold the world fixed, vary sea level.** Raising `sea_level_km` by
-    +0.5 km instantly converts every continental hex sitting in
-    `[reference, reference + 3.3 km]` of thickness from land to
-    epicontinental sea — no sim rerun. Cretaceous-style high stands and
-    glacial-maximum low stands are a config edit.
-  - **Hold sea level fixed, vary tectonic parameters.** Plate dynamics
-    alone reshape geography; the water line stays at the same physical
-    reference so before/after maps are directly comparable.
+- **Hold the world fixed, vary sea level.** Raising the threshold
+  instantly converts shallow continental hexes to epicontinental sea —
+  no sim rerun.
+- **Hold sea level fixed, vary tectonic parameters.** Plate dynamics
+  alone reshape geography; the water line stays at the same physical
+  reference so before/after maps are directly comparable.
 
-Fold sea level into dynamics only when a feedback effect needs it —
-erosion (Phase 7) is the first place that becomes physically meaningful
-(weathering above the water line, deposition below it). None of the
-current physics phases need it.
+## `param_temperature` — physics-parameter exploration
 
-**v1 deferrals.** No Wilson-cycle re-seeding (plates drift on their initial
-velocities for the full sim). No plate rotation. No continent merging. No
-proper stream-power erosion. No hotspots / transform faults. Erosion is a
-PlaTec-style continental thickness blur, not a real hydraulic model.
+`WorldgenConfig.param_temperature` is a top-level hyperparameter that
+controls how much the run perturbs subsystem physics around its
+configured baseline. `0` is fully deterministic; larger values produce a
+parameter draw whose spread is proportional to the temperature.
+
+Today only the tectonics bridge consumes it — by feeding the loaded
+`SimConfig` through `tectonic_sim.randomize_sim_config`. The hook is
+intended to extend to other subsystems (climate priors, ocean
+coefficients, …) when the need arises. Randomization is decoupled from
+the simulator's own RNG hierarchy so changing the temperature doesn't
+reshuffle the base seed.
 
 ## Map latitude window
 
-`hex_size_km` (the physical resolution) is **independent** of where the map
-sits on the planet. `[worldgen.climate]` carries `map_lat_min` /
-`map_lat_max` — the geographic latitudes the map's r-axis covers. The r-axis
-convention is **north = negative r** (matches the renderer's top-of-image).
+`hex_size_km` (the physical resolution) is **independent** of where the
+map sits on the planet. `[worldgen.climate]` carries `map_lat_min` /
+`map_lat_max` — the geographic latitudes the map's r-axis covers. The
+planet's overall climate is anchored by `equator_temp_c` and
+`polar_temp_c`; the map samples a slice of that gradient through its
+lat window, with Earth-like wind bands.
 
-The planet's overall climate is anchored by `equator_temp_c` (at lat 0°) and
-`polar_temp_c` (at ±90°); the map samples a slice of that gradient through
-its lat window. Wind bands are Earth-like: trade easterlies inside ±30°,
-westerlies 30°–60°, polar easterlies above 60°, with smoothstep transitions.
+The km extent of the map is set independently by `world.width_km` /
+`world.height_km`, so the same physical map can span any latitude range
+— a 1000-km map can equally well represent 1° or 60° of latitude.
 
-Defaults are `(-90, 90)` for pole-to-pole behaviour. For a temperate slice
-(e.g. a Europe-shaped continent) try `map_lat_min = 30, map_lat_max = 60`.
-The km extent of that map is whatever `hex_size_km × (2 × radius)` works out
-to — you can simulate a 1000-km map spanning 1° or 60° of latitude.
+**Physical-unit scaling.** Scale-dependent generator parameters live in
+physical units (km, km², mm/km-of-land-fetch) and are converted to
+per-hex units via `hex_size_km` at use time. Changing `hex_size_km`
+automatically rescales noise frequency, wind reach, river thresholds,
+and precipitation rates — the same physical world looks the same at any
+chosen resolution.
 
-**Physical-unit scaling.** Scale-dependent generator parameters are stored in physical units (km, km², mm/km of land fetch) and converted to per-hex units via `hex_size_km` at use time. Changing `hex_size_km` (default 5 km) automatically rescales noise frequency, wind reach, river thresholds, deposit feature wavelengths, and precipitation rates — the same physical world looks the same at any chosen hex resolution.
-
-**Per-hex output (`HexData`).**
-
-| Field | Source |
-|---|---|
-| `elevation`, `is_ocean`, `is_coast` | L1 + L2 |
-| `temperature_c`, `precipitation_mm` | L3 + L4 |
-| `is_river`, `is_lake`, `flow_accumulation` | L5 |
-| `biome` | L6 (a name from `TERRAIN_NAMES`) |
-| `plate_id`, `plate_type`, `nearest_boundary_type`, `distance_to_boundary_km` | L0 (or `None` when plates are off) |
+The per-hex output schema lives in `HexData` (`worldgen/types.py`).
 
 ## Export
 
@@ -199,11 +189,13 @@ Two public endpoints in `worldgen.export` (re-exported from the package root):
 - `serialize_world(world) -> WorldSnapshot` — pure projection of a
   `GeneratedWorld` into a generic, JSON-friendly container. No side effects;
   no timestamp / seed injected here. Identical worlds → equal snapshots.
-- `export_world(radius, config, seed, output_root) -> Path` — generates,
+- `export_world(config, seed, output_root, ...) -> Path` — generates,
   serializes to `snapshot.json`, and renders one PNG per layer under
-  `<output_root>/seed<seed>_r<radius>_<YYYYMMDD-HHMMSS>/layers/`. The
-  per-export folder name carries the seed + radius + timestamp; the snapshot's
-  `metadata` carries seed, timestamp, schema_version, mask_mode, hex_size_km.
+  `<output_root>/seed<seed>_<W>x<H>km_<YYYYMMDD-HHMMSS>/layers/`. The
+  per-export folder name carries the seed, world footprint (W×H from
+  `config.world`), and timestamp; the snapshot's `metadata` carries
+  seed, timestamp, schema_version, world_width_km, world_height_km,
+  hex_size_km.
 
 `save_snapshot` / `load_snapshot` are JSON file I/O helpers; `WorldSnapshot`
 itself is format-agnostic via `to_dict` / `from_dict`.
@@ -228,16 +220,42 @@ serializes it to `snapshot.json`, and renders every available layer as a
 PNG (plus a per-plate `plates/plate_NN.png` and a drift `drift.gif`).
 
 ```
-python -m worldgen --seed 42 --radius 80 --out exports/
-python -m worldgen --seed 42 --radius 80 --out exports/ --stop-after climate
-python -m worldgen --seed 42 --radius 80 --out exports/ -q   # silence logs
+python -m worldgen --seed 42 --out exports/
+python -m worldgen --seed 42 --out exports/ --stop-after climate
+python -m worldgen --seed 42 --out exports/ -q   # silence logs
+python -m worldgen --seed 42 --out exports/ --profile
+python -m worldgen --seed 42 --config path/to/custom.toml --out exports/
 ```
+
+World dimensions come from `[worldgen.world] width_km, height_km` in the
+TOML — there is no `--radius` / `--width` / `--height` CLI override; if
+you want a different footprint, point `--config` at a TOML with the
+shape you want.
 
 `--stop-after STEP` halts the pipeline after the named step (one of
 `PIPELINE_STEPS`); only the layers whose source data is populated are
 rendered. Default logging is DEBUG (per-layer timings + progress bars);
-`-q`/`--quiet` drops to WARNING. Requires the `[preview]` extra (Pillow).
-`preview.py` is a pure library now — the only CLI is `python -m worldgen`.
+`-q`/`--quiet` drops to WARNING. Requires the `[preview]` extra
+(Pillow). `worldgen/preview.py` is a pure library; `python -m worldgen`
+is the only CLI.
+
+`--profile` re-execs the run under py-spy and records a wall-clock
+flamegraph (SVG) into `<out>/profiles/profile_<timestamp>_s<seed>.svg`
+alongside the export folder; pair with `--profile-sample-rate HZ`
+(default 200) to tune sampling density. Requires the `[dev]` extra
+(py-spy on PATH or installed in the active environment).
+
+## Demos
+
+`demos/` is intentionally near-empty (only `__init__.py` and a
+gitignored `output/`). All visual inspection and profiling runs
+through the canonical `python -m worldgen` entry point: polygon-sim
+renders land in `<export>/tectonic_sim_views/`, profiling is the
+`--profile` flag (see Export CLI).
+
+Add new demos here only when they exercise something the main CLI
+genuinely can't (e.g. multi-seed parameter sweeps across processes);
+otherwise prefer extending `python -m worldgen`.
 
 ## Conventions
 

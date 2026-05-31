@@ -30,8 +30,8 @@ from collections import deque
 from dataclasses import dataclass
 
 from worldgen.hex import Hex
-from worldgen.types import OceanConfig, SeaLayer, WorldgenConfig
-from worldgen.world import map_half_extents_km
+from worldgen.types import SeaLayer, WorldgenConfig
+from worldgen.world import hex_to_xy_km, map_half_extents_km
 
 
 _SQRT3 = math.sqrt(3.0)
@@ -64,12 +64,6 @@ class OceanLayer:
     distance_to_ocean_km: dict[Hex, float]
     gyre_id: dict[Hex, int]
     n_gyres: int
-
-
-def _hex_to_xy_km(h: Hex, hex_size_km: float) -> tuple[float, float]:
-    x = 1.5 * h.q
-    y = _SQRT3 * (h.r + h.q / 2.0)
-    return x * hex_size_km, y * hex_size_km
 
 
 def _hex_latitude_deg(
@@ -154,8 +148,8 @@ def _split_basins_into_gyres(
             if not sub_hexes:
                 continue
             # Centroid in cartesian km.
-            sx = sum(_hex_to_xy_km(h, hex_size_km)[0] for h in sub_hexes)
-            sy = sum(_hex_to_xy_km(h, hex_size_km)[1] for h in sub_hexes)
+            sx = sum(hex_to_xy_km(h, hex_size_km)[0] for h in sub_hexes)
+            sy = sum(hex_to_xy_km(h, hex_size_km)[1] for h in sub_hexes)
             cx = sx / len(sub_hexes)
             cy = sy / len(sub_hexes)
             gyres.append((sub_hexes, (cx, cy), rotation))
@@ -188,7 +182,7 @@ def _current_direction_at(
     Upstream south, lower lat, warmer ⇒ WARM. That's the Gulf-Stream /
     Kuroshio / Brazil-Current warm-boundary pattern.
     """
-    hx, hy = _hex_to_xy_km(h, hex_size_km)
+    hx, hy = hex_to_xy_km(h, hex_size_km)
     rx = hx - centre_xy[0]
     ry = hy - centre_xy[1]
     norm = math.hypot(rx, ry)
@@ -204,10 +198,10 @@ def _current_direction_at(
     return (tx / tnorm, ty / tnorm)
 
 
-def _nearest_hex_to_xy_km(
+def _nearesthex_to_xy_km(
     x_km: float, y_km: float, hex_size_km: float,
 ) -> Hex:
-    """Approximate inverse of ``_hex_to_xy_km`` — cube round."""
+    """Approximate inverse of ``hex_to_xy_km`` — cube round."""
     x = x_km / hex_size_km
     y = y_km / hex_size_km
     qf = x / 1.5
@@ -239,10 +233,10 @@ def _compute_current_anomaly(
     """Sample upstream latitude temperature; anomaly = (upstream − local) × strength."""
     if direction == (0.0, 0.0):
         return 0.0
-    hx, hy = _hex_to_xy_km(h, hex_size_km)
+    hx, hy = hex_to_xy_km(h, hex_size_km)
     ux = hx - direction[0] * persistence_km
     uy = hy - direction[1] * persistence_km
-    upstream_hex = _nearest_hex_to_xy_km(ux, uy, hex_size_km)
+    upstream_hex = _nearesthex_to_xy_km(ux, uy, hex_size_km)
     upstream_lat = _hex_latitude_deg(upstream_hex, half_height_km, config)
     local_lat = _hex_latitude_deg(h, half_height_km, config)
     upstream_t = _lat_baseline_temp(upstream_lat, config)

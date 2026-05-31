@@ -89,18 +89,21 @@ class PlateConfig:
     convergence_threshold: float
 
 
-@dataclass(frozen=True)
-class TectonicsConfig:
-    """Parameters for the time-stepped plate tectonics simulation.
+# TectonicsConfig used to be a worldgen-side dataclass that duplicated
+# the physics tunables from ``tectonic_sim.SimConfig``. Post-refactor,
+# the tectonic_sim module owns its own TOML (``config/tectonic_sim.toml``)
+# and SimConfig dataclass, and worldgen loads it directly. We keep the
+# name as a transparent alias so existing worldgen callsites that read
+# ``config.tectonics.X`` continue to work unchanged.
+from tectonic_sim.types import SimConfig as TectonicsConfig  # noqa: F401
 
-    The sim runs ``n_ticks`` iterations of ``dt_myr`` Myr each. At each tick,
-    plates drift in continuous km coordinates; per-hex crust columns (carried
-    by each plate in plate-local hex space) overlap, collide, subduct, or
-    fold; new oceanic crust spawns where plates have moved apart.
 
-    All elevation-affecting parameters are physical (km, km/Myr, Myr).
-    """
-
+# --- Old TectonicsConfig field list, kept here as documentation. The
+# real source of truth is now ``tectonic_sim.types.SimConfig`` and the
+# TOML it loads from. Fields below are NOT used anymore — they're a
+# historical reference for the worldgen-side schema before the cutover.
+_LEGACY_DELETED_TECTONICS_CONFIG_NOTE = """
+class _OldTectonicsConfig:
     # --- Sim duration ---
     n_ticks: int                            # geological ticks to simulate
     dt_myr: float                           # Myr per tick (typical: 1–5)
@@ -168,11 +171,8 @@ class TectonicsConfig:
     boundary_warp_wavelength_km: float
 
     # --- Drift snapshots ---
-    # Capture a TectonicFrame every N ticks so the drift can be played back
-    # as an animation. 0 disables capture (and the drift GIF). Set to 1 to
-    # capture every tick (most detailed, biggest memory + GIF file); 5 is a
-    # reasonable default (100 ticks → 21 frames including t=0 and t=N).
     snapshot_period_ticks: int
+"""
 
 
 @dataclass(frozen=True)
@@ -252,6 +252,17 @@ class WorldgenConfig:
 
     # World footprint (width × height in km). See ``WorldShape``.
     world: WorldShape
+
+    # Hyperparameter controlling the magnitude of random exploration
+    # applied to the tectonics physics config before each run.
+    #   0 (default) → deterministic run from the configured TectonicsConfig.
+    #   > 0         → each tectonic_sim field is drawn from a Normal around
+    #                 its configured value, with std × param_temperature.
+    # The same hyperparameter is intended to extend to other worldgen
+    # subsystems (climate priors, ocean coefficients, etc.) in the future;
+    # for now it only affects the tectonics simulation. See
+    # ``tectonic_sim.randomize_sim_config``.
+    param_temperature: float
 
     # Elevation — physical-unit parameters
     # Dominant feature wavelength (km) for the base fBm — controls how

@@ -23,6 +23,12 @@
 # Generated worlds will look the same at any chosen resolution.
 hex_size_km = 5.0
 
+# Path (relative to this file's directory) to the standalone
+# tectonic_sim configuration. The tectonics simulator is configured
+# entirely from that file — worldgen.toml no longer duplicates its
+# fields. Any change to tectonic physics goes in tectonic_sim.toml.
+tectonic_sim_config = "tectonic_sim.toml"
+
 [worldgen.world]
 # Rectangular map footprint in km. The world hex set is every hex whose
 # flat-top pixel centre falls in the rectangle [-W/2, W/2] × [-H/2, H/2].
@@ -149,93 +155,6 @@ forest_max_precip = 1200.0
 cool_band_dry_threshold = 150.0
 # Above forest_max_precip → jungle (in warm zones) or temperate_forest (in cool zones)
 
-
-[worldgen.tectonics]
-# Time-stepped plate-tectonics simulation. Runs automatically when
-# `mask_mode = "plates"` is active. The plates layer (above) seeds the t=0
-# state — plate positions, types, and motion vectors — and this section
-# controls how those plates evolve over geological time.
-#
-# Each tick advances every plate by velocity × dt_myr, recomputes per-hex
-# overlap, resolves collisions (subduction or continental folding), spawns
-# fresh oceanic crust at divergent gaps, and ages all existing crust.
-# After n_ticks the final lithosphere column at each hex is converted to a
-# signed elevation (km) by:
-#
-#   continental:  e = (thickness - reference) × isostasy_factor
-#   oceanic:      e = -ridge_depth - subsidence_rate × √age_myr   (capped)
-#
-# That elevation is then normalized via [worldgen.climate] max_elevation_km
-# and fed to the elevation layer as the macro baseline; fBm/ridged noise
-# becomes small-scale detail on top (controlled by tectonic_blend_weight).
-
-n_ticks = 100                            # geological ticks (100 × 2 Myr = 200 Myr)
-dt_myr = 2.0                             # Myr per tick
-
-# Sea level threshold (km, signed). Used by plate-interaction logic to
-# decide ocean-floor vs land character of a column. Also subtracted from
-# the lithosphere baseline before normalization, so this value becomes 0
-# in the normalized elevation field.
-sea_level_km = 0.0
-
-# Multiplier applied to each plate's unit motion vector to get physical
-# velocity (km/Myr). Real Earth plates drift at ~30–100 km/Myr; here we use
-# a faster value so 200 Myr is enough to see substantial rearrangement.
-plate_speed_kmpy = 60.0
-
-# Initial column thicknesses (km). Continental crust nominally 30–40 km;
-# oceanic crust 5–10 km. These are starting values — collisions thicken
-# them over time, erosion thins them.
-continental_thickness_km = 35.0
-oceanic_thickness_km = 7.0
-# Thickness for new continental crust spawned at divergent gaps when the
-# nearest plate is itself continental — a rift-valley / failed-rift basin
-# rather than a fake oceanic basin. 28 km with isostasy_factor 0.15 puts
-# the column at ~−1 km elevation (East-African-Rift / Dead-Sea analogue).
-rift_thickness_km = 33.0
-
-# Ocean floor depth via half-space cooling. Earth: ridge ≈ 2.5 km below
-# sea level, rate ≈ 0.35 km per √Myr, abyssal plains cap at ≈ 6 km.
-ridge_depth_km = 2.5
-ridge_subsidence_rate = 0.35              # km per √Myr
-max_ocean_depth_km = 6.0                  # cap on subsidence
-
-# Continental isostasy: elevation = (thickness - reference) × factor.
-# A 35-km column sits at sea level; +10 km of thickness gives +1.5 km of
-# elevation with factor 0.15 (a typical Tibetan-style continental rise).
-continental_reference_thickness_km = 35.0
-continental_isostasy_factor = 0.15
-
-# Collision response per tick that two plates overlap at a hex:
-#   - Continental-on-continental: transfer `folding_ratio` of smaller
-#     plate's thickness to larger; both gain orogeny uplift.
-#   - Either side oceanic: subduct the lower-buoyancy column; survivor
-#     gains arc uplift.
-orogeny_uplift_per_overlap_km = 0.08      # mountain building per overlap event
-folding_ratio = 0.05                      # fraction of smaller-plate mass folded over
-subduction_arc_uplift_km = 0.04           # volcanic arc thickening per subduction
-
-# Erosion is a placeholder PlaTec-style blur applied every N ticks: each
-# continental column blends a fraction toward its plate-local neighbors'
-# mean thickness. Submerged crust is not eroded. Set period=0 to disable.
-erosion_period = 10
-erosion_strength = 0.05
-
-# Boundary-warp post-processing. Each crust-type boundary hex gets a Perlin
-# noise sample; with probability set by `boundary_warp_strength`, the hex
-# is flipped to a different-type neighbour's column. This breaks the
-# integer-hex grid alignment left by rigid plate-stamp translation, so
-# coastlines look wavy (bays/headlands) instead of straight rectangular
-# edges. Set strength=0 to disable.
-boundary_warp_strength = 0.40         # 0..1; fraction of boundary hexes to flip
-boundary_warp_wavelength_km = 80.0    # Perlin wavelength; smaller = chunkier
-
-# Capture a snapshot of plate ownership + crust type every N ticks so the
-# drift can be played back as an animation (drift.gif in the export folder).
-# 0 disables. 1 = every tick (101 frames at default n_ticks=100; smoothest
-# drift because per-frame hex displacement is sub-hex). Larger values shrink
-# the GIF but make plate motion look like teleporting.
-snapshot_period_ticks = 1
 
 [worldgen.ocean]
 # Ocean currents (Tier 2 climate): each connected ocean basin is split by

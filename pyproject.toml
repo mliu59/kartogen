@@ -16,6 +16,11 @@ dependencies = [
     # spatial queries, and snapshot arrays. Worldgen itself never imports
     # numpy directly, but it ships in the same env as tectonic_sim.
     "numpy>=1.26",
+    # scipy is a hard dependency of tectonic_sim: spatial.py uses
+    # scipy.spatial (cKDTree, Delaunay) for plate-particle queries and
+    # triangulation. The contact prototype demos also use scipy.ndimage
+    # for connected-component labelling.
+    "scipy>=1.11",
 ]
 
 [project.optional-dependencies]
@@ -23,6 +28,10 @@ dev = [
     "pytest>=8.0",
     "mypy>=1.10",
     "ruff>=0.4",
+    # py-spy is a sampling profiler — attaches to a running process or
+    # wraps `python` invocations to record flame graphs with near-zero
+    # overhead. Used by demos/profile_polygon.py.
+    "py-spy>=0.3.14",
 ]
 
 [tool.setuptools.packages.find]

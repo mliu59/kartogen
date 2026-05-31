@@ -129,6 +129,8 @@ def generate(
         ):
             lithosphere = tectonics_layer.simulate_tectonics(
                 plate_field, hexes, config.tectonics, config.hex_size_km, rng,
+                world_shape=config.world,
+                param_temperature=config.param_temperature,
             )
 
     if stop_ix >= _step_index("elevation"):

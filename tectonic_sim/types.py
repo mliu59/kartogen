@@ -1,14 +1,16 @@
-"""Data types for ``tectonic_sim``.
+"""Shared data types for ``tectonic_sim``.
 
-Everything is in continuous km space. No hex anywhere. Particles are
-stored as parallel numpy arrays inside ``Snapshot`` and ``Frame`` for
-cheap vectorised access; the rest of the data model is plain
-``@dataclass(frozen=True)`` so user code can pattern-match and compare.
+Public surface:
+
+  - ``WorldRect`` — toroidal simulation domain in km
+  - ``SimConfig`` — physics tunables (read by polygon_sim + worldgen bridge)
+  - ``CRUST_CONTINENTAL`` / ``CRUST_OCEANIC`` — int8 codes
+  - ``crust_type_code`` / ``crust_type_name`` — string ↔ int
 
 Crust type encoding: integer codes ``CRUST_CONTINENTAL = 0`` and
-``CRUST_OCEANIC = 1`` rather than strings, so the per-particle field can
-live in an ``int8`` array (smaller, vectorised comparisons). Helpers
-convert to/from strings at the public boundary.
+``CRUST_OCEANIC = 1`` rather than strings, so the per-cell field can
+live in an ``int8`` array. Helpers convert to/from strings at the
+public boundary.
 """
 
 from __future__ import annotations
@@ -19,25 +21,15 @@ from typing import Union
 import numpy as np
 
 # Type alias for "scalar or numpy array of floats" — used in WorldRect's
-# wrap helpers which work on both per-particle vectors and bulk arrays.
+# wrap helpers which work on both single coordinates and bulk arrays.
 FloatLike = Union[float, np.ndarray]
 
 
-# Crust type encoding for the integer arrays.
+# Crust type encoding for integer arrays.
 CRUST_CONTINENTAL: int = 0
 CRUST_OCEANIC: int = 1
 
 _CRUST_TYPE_NAMES = ("continental", "oceanic")
-
-
-# Collision-detection radius is *defined* as a multiple of the
-# particle spacing: Bridson Poisson-disc guarantees a minimum
-# pairwise distance of ``particle_spacing_km``, so the overlap
-# radius must be strictly larger or no cross-plate pair ever
-# fires. 1.5× catches the immediate-neighbour rank along each
-# Voronoi boundary (one collision event per ~spacing of boundary
-# length) without double-triggering deeper ranks.
-OVERLAP_RADIUS_MULTIPLIER: float = 1.5
 
 
 def crust_type_name(code: int) -> str:
@@ -58,9 +50,10 @@ def crust_type_code(name: str) -> int:
 class WorldRect:
     """Simulation domain in km, centred on (0, 0).
 
-    The sim treats this as a hard bounding box: with ``boundary_mode =
-    "open"`` (the only mode for now), particles that drift past these
-    bounds are deleted at the next step.
+    The domain is **always** a torus — particles/cells that drift past
+    one edge re-enter from the opposite edge, and cross-edge distance
+    queries use the toroidal shortest-path metric. There is no other
+    boundary mode.
     """
 
     width_km: float
@@ -79,19 +72,13 @@ class WorldRect:
         return self.width_km * self.height_km
 
     # --- Toroidal geometry helpers ---
-    # These are used wherever the simulation needs to respect the wrap-
-    # around domain boundary (``boundary_mode = "wrap"``). The maths is
-    # the standard "shortest signed distance modulo period" form. When
-    # ``boundary_mode = "open"`` is configured, callers should *not*
-    # call these — the open-boundary cull at the kinematics step keeps
-    # positions inside the rectangle, and distances are taken directly.
 
     def wrap_positions(self, positions_km: np.ndarray) -> np.ndarray:
         """Wrap an ``(N, 2)`` array of positions onto the toroidal domain.
 
         Coordinates are remapped to ``[-half_width, +half_width)`` ×
-        ``[-half_height, +half_height)``. Returns a new array; the input
-        is not mutated.
+        ``[-half_height, +half_height)``. Returns a new array; input is
+        not mutated.
         """
         out = np.empty_like(positions_km)
         out[:, 0] = (
@@ -107,12 +94,7 @@ class WorldRect:
     def wrapped_delta_xy(
         self, dx: FloatLike, dy: FloatLike,
     ) -> tuple[FloatLike, FloatLike]:
-        """Return the toroidal shortest-path delta for one or many ``(dx, dy)``.
-
-        For each component, the result lies in ``[-half_period, +half_period)``
-        so its magnitude is the shortest distance around the torus.
-        Scalars and numpy arrays both work — the formula is identical.
-        """
+        """Toroidal shortest-path delta for one or many ``(dx, dy)``."""
         wx = (dx + self.half_width_km) % self.width_km - self.half_width_km
         wy = (dy + self.half_height_km) % self.height_km - self.half_height_km
         return wx, wy
@@ -122,12 +104,7 @@ class WorldRect:
         a_xy_km: np.ndarray,
         b_xy_km: np.ndarray,
     ) -> np.ndarray:
-        """Toroidal Euclidean distance between paired points.
-
-        ``a_xy_km`` and ``b_xy_km`` are either ``(2,)`` arrays (one pair)
-        or ``(N, 2)`` arrays (N parallel pairs). Returns a scalar or
-        ``(N,)`` array accordingly.
-        """
+        """Toroidal Euclidean distance between paired points."""
         diff = a_xy_km - b_xy_km
         if diff.ndim == 1:
             dx, dy = self.wrapped_delta_xy(diff[0], diff[1])
@@ -138,11 +115,29 @@ class WorldRect:
 
 @dataclass(frozen=True)
 class SimConfig:
-    """All physics knobs. No grid, no climate, no map_lat — physics only.
+    """Physics tunables for the rigid-polygon simulator.
 
-    Loaded by ``config_loader.load_sim_config`` from a TOML table. Every
-    field is required (no defaults at construction time so missing-config
-    bugs surface at load, not as silent zeros downstream).
+    Loaded by ``config_loader.load_sim_config`` from a TOML table.
+    Every field is required (no defaults at construction time so
+    missing-config bugs surface at load, not as silent zeros
+    downstream). All fields are threaded through the per-tick polygon-
+    sim modules — there is no shadow set of module-level constants any
+    more.
+
+    Groups:
+
+      - plate population (count, fraction, motion cap, seed bias)
+      - sim duration (n_ticks, dt_myr)
+      - crust thicknesses (continental, oceanic, rift)
+      - half-space cooling (ridge_depth, subsidence_rate, max_ocean_depth)
+      - continental isostasy (reference_thickness, factor) + sea level
+      - collision (orogeny, folding_ratio, folding_displacement,
+        subduction_arc)
+      - velocity damping, erosion, snapshot capture
+      - Voronoi seeding (warp_*, weight_*, init_thickness_*)
+      - per-cell physics (init_angular_velocity, momentum_*, fusion_*,
+        accretion_*, hotspot_*, rift_*, buoyancy_*, alpha_factor,
+        min_continental_thickness, fragment_spawn_threshold)
     """
 
     # --- Plate population ---
@@ -150,9 +145,9 @@ class SimConfig:
     continental_fraction: float
     motion_speed_kmpy: float
     seed_radial_bias: float                       # 0 = uniform, >0 = centre, <0 = edge
-
-    # --- Initial particle layout ---
-    # Bridson Poisson-disc target spacing; particle density ~ 1/(π·s²/4).
+    # Minimum plate-seed separation hint. Kept under the legacy name
+    # for backward compatibility with the TOML; polygon_sim repurposes
+    # it as a "min plate-seed separation" floor.
     particle_spacing_km: float
 
     # --- Sim duration ---
@@ -160,147 +155,113 @@ class SimConfig:
     dt_myr: float
 
     # --- Crust thicknesses ---
-    continental_thickness_km: float               # initial continental column
-    oceanic_thickness_km: float                   # initial oceanic column
-    rift_thickness_km: float                      # thinned continental crust spawned
-                                                  # at a continental-plate divergent gap
+    continental_thickness_km: float
+    oceanic_thickness_km: float
+    rift_thickness_km: float
 
     # --- Half-space cooling (oceanic floor depth) ---
-    ridge_depth_km: float                         # depth at age 0
-    ridge_subsidence_rate: float                  # km per √Myr
-    max_ocean_depth_km: float                     # cap on subsidence
+    ridge_depth_km: float
+    ridge_subsidence_rate: float
+    max_ocean_depth_km: float
 
     # --- Continental isostasy ---
     continental_reference_thickness_km: float
     continental_isostasy_factor: float
-    sea_level_km: float                           # signed km — particles below = ocean
+    sea_level_km: float
 
     # --- Collision ---
-    # NOTE: ``overlap_radius_km`` is *not* a config field. It is hardcoded
-    # to ``OVERLAP_RADIUS_MULTIPLIER × particle_spacing_km`` and exposed
-    # as a derived property — see the property definition below.
-    orogeny_uplift_per_overlap_km: float          # per cc-overlap tick
-    folding_ratio: float                          # fraction of smaller column folded over
-    folding_displacement_km: float                # how much the lower particle moves
-    subduction_arc_uplift_km: float               # per oc/oo-overlap tick on the survivor
-    # A continental particle whose thickness drops below this threshold is
-    # considered "absorbed" by the over-riding plate. The depleted particle
-    # is removed and its remaining thickness is added to the nearest
-    # cross-plate continental neighbour. Geologically: the underthruster's
-    # leading-edge crust gets fully incorporated into the over-rider over
-    # tens of Myr (lighter end of the Wilson cycle).
+    orogeny_uplift_per_overlap_km: float
+    folding_ratio: float
+    folding_displacement_km: float
+    subduction_arc_uplift_km: float
+
+    # --- Velocity damping ---
+    velocity_damping_strength: float
+
+    # --- Erosion / snapshot capture ---
+    erosion_period: int
+    erosion_strength: float
+    snapshot_period_ticks: int
+
+    # =====================================================================
+    # Polygon-sim per-cell physics fields. All read by the matching
+    # polygon_sim phase module and perturbable by
+    # ``randomize_sim_config``.
+    # =====================================================================
+    init_speed_min_ratio: float
+    plate_area_per_plate_km2: float
+    init_angular_velocity_max_rad_per_myr: float
+    angular_damping_multiplier: float
+    momentum_restitution: float
+    momentum_contact_boost: float
+    fusion_overlap_threshold: float
+    fusion_both_continental_only: bool
+    accretion_prob_per_boundary_per_tick: float
+    accretion_cells_per_event: int
+    accretion_inland_offset_min_km: float
+    accretion_inland_offset_max_km: float
+    rift_prob_per_tick: float
+    rift_min_plate_cells: int
+    rift_divergence_ratio: float
+    hotspot_density_per_km2: float
+    hotspot_erupt_prob_per_tick: float
+    hotspot_thickness_bump_km: float
+    hotspot_island_radius_km: float
+    hotspot_birth_stagger_ticks: int
+    hotspot_lifespan_mean_ticks: float
+    hotspot_lifespan_std_ticks: float
+
+    # =====================================================================
+    # Polygon-sim physics tunables that USED to live as module-level
+    # constants in ``tectonic_sim.polygon_sim.types``. Moved here so
+    # there's a single source of truth for everything tunable. The
+    # polygon_sim physics functions read these via the SimConfig that
+    # gets threaded through every per-tick phase.
+    # =====================================================================
+
+    # Cell-grid resolution. Polygon sim derives (gy, gx) from
+    # (domain, target_cell_km). Smaller cell → finer grid + higher cost.
+    target_cell_km: float
+    # Scales the maximum plate translation speed relative to the
+    # geometric cap (min(sim_w, sim_h) / total_time). 0.5 = at most
+    # half the world over the run.
+    translation_speed_ratio: float
+
+    # Released-component handling: components ≥ threshold spawn as new
+    # plates; smaller redistribute to neighbours.
+    fragment_spawn_threshold: int
+
+    # Alpha-complex circumradius cutoffs (× cell_km). Used by polygon
+    # extraction and initial-state alpha-complex build.
+    alpha_factor: float
+    init_alpha_factor: float
+
+    # Continental priority multiplier in per-cell contention. At 50, a
+    # 1-cell continental plate has the same priority as a 50-cell
+    # oceanic plate.
+    crust_continental_weight: float
+
+    # Pyplatec buoyancy bonus on young oceanic crust. Decays linearly
+    # to zero at ``max_buoyancy_age_myr``.
+    buoyancy_bonus_frac: float
+    max_buoyancy_age_myr: float
+
+    # Continental cells thinned below this threshold (km) are absorbed
+    # by their over-rider via thickness transfer to a neighbour, and
+    # the cell reverts to oceanic. 0 disables.
     min_continental_thickness_km: float
 
-    # --- Contact constraints + velocity damping ---
-    # Number of PBD relaxation passes per tick. Each pass detects cross-
-    # plate pairs within overlap_radius and pushes them apart by half the
-    # overlap depth, enforcing geometric rigid-plate behaviour.
-    contact_iterations: int
-    # Velocity damping strength: per-tick fraction of plate velocity lost
-    # when 100 % of the plate's particles are in contact. Energy goes
-    # implicitly into thickening (orogeny). Typical: 0.03–0.10.
-    velocity_damping_strength: float
-    # Intra-plate spacing constraint: a *second* PBD pass each iteration
-    # pushes apart same-plate particles closer than
-    # ``intra_plate_min_distance_factor × particle_spacing_km``. Models
-    # crust incompressibility — without it, the cross-plate constraint
-    # shoves same-plate neighbours into stripes (force-chain artefact).
-    # 0 disables. Typical: 0.5 (fires only on severe collapse, well below
-    # the Bridson Poisson-disc invariant of 1.0).
-    intra_plate_min_distance_factor: float
+    # Initial plate-shape naturalisation (Methods 1+2: domain warp +
+    # power weights). All values per tick or per draw.
+    voronoi_warp_amplitude_km: float
+    voronoi_warp_sigma_cells: float
+    voronoi_warp_jaggedness: float
+    voronoi_warp_jagged_sigma_cells: float
+    voronoi_weight_sigma: float
+    voronoi_weight_scale_km: float
 
-    # --- Erosion ---
-    erosion_period: int                           # apply every N ticks; 0 disables
-    erosion_strength: float                       # blend fraction toward neighbour mean
-
-    # --- Boundaries ---
-    boundary_mode: str                            # "open" only for now
-
-    # --- Snapshots ---
-    snapshot_period_ticks: int                    # 0 disables Frame capture
-
-    @property
-    def overlap_radius_km(self) -> float:
-        """Cross-plate collision-detection radius, derived from particle spacing.
-
-        Always ``OVERLAP_RADIUS_MULTIPLIER × particle_spacing_km``. Not
-        a configurable field because Bridson Poisson-disc guarantees a
-        minimum particle separation of ``particle_spacing_km``; any
-        ``overlap_radius`` below that would detect zero pairs by
-        construction, and any value above ~2× would multi-rank
-        collisions. The multiplier sits at 1.5 for both reasons.
-        """
-        return OVERLAP_RADIUS_MULTIPLIER * self.particle_spacing_km
-
-    @property
-    def intra_plate_min_distance_km(self) -> float:
-        """Minimum allowed separation between same-plate particles.
-
-        Derived as ``intra_plate_min_distance_factor × particle_spacing_km``
-        so the constraint auto-scales with the chosen particle resolution.
-        Returns 0 when the factor is 0 (constraint disabled).
-        """
-        return self.intra_plate_min_distance_factor * self.particle_spacing_km
-
-
-@dataclass(frozen=True)
-class Plate:
-    """One plate's identity + bulk kinematics.
-
-    The plate itself owns no particles directly; per-particle data lives
-    in the ``Snapshot`` / ``Frame`` arrays, keyed by ``plate_id``. This
-    keeps subduction (removing particles) and divergent fill (adding
-    particles) cheap and vectorisable.
-    """
-
-    id: int
-    type: str                                     # initial type — "continental" / "oceanic"
-    seed_position_km: tuple[float, float]
-    velocity_kmpy: tuple[float, float]
-
-
-@dataclass(frozen=True)
-class Frame:
-    """One captured slice of particle state mid-sim, used for animations.
-
-    Frames carry only what the renderer needs (positions, plate ids,
-    crust types) — not the full thickness/age arrays — so a long history
-    stays small in memory and on disk.
-    """
-
-    tick: int
-    time_myr: float
-    plate_centers_km: np.ndarray                  # (P, 2) float64
-    particle_position_km: np.ndarray              # (N_t, 2) float64
-    particle_plate_id: np.ndarray                 # (N_t,) int32
-    particle_crust_type: np.ndarray               # (N_t,) int8
-
-
-@dataclass(frozen=True)
-class Snapshot:
-    """Final output of one ``simulate()`` call.
-
-    Particle arrays are parallel; index i in any one of them refers to
-    the same particle in all the others. The arrays are ``np.ndarray``
-    rather than tuple-of-dataclass for ~100× faster sampling.
-    """
-
-    domain: WorldRect
-    plates: tuple[Plate, ...]
-
-    # Particle arrays. Shape: (N,)
-    particle_position_km: np.ndarray              # (N, 2) float64
-    particle_plate_id: np.ndarray                 # (N,) int32
-    particle_thickness_km: np.ndarray             # (N,) float64
-    particle_age_myr: np.ndarray                  # (N,) float64
-    particle_crust_type: np.ndarray               # (N,) int8
-
-    # Captured drift history (empty tuple if snapshot_period_ticks == 0).
-    frames: tuple[Frame, ...]
-
-    final_tick: int
-    final_time_myr: float
-
-    @property
-    def particle_count(self) -> int:
-        return int(self.particle_position_km.shape[0])
+    # Initial thickness variation overlays (per-plate baseline + per-cell
+    # noise field). 0 → uniform 35/7 km per crust type.
+    init_thickness_per_plate_sigma: float
+    init_thickness_noise_amplitude_frac: float
+    init_thickness_noise_sigma_cells: float

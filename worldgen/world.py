@@ -46,9 +46,13 @@ def map_half_extents_km(
     return max_abs_x, max_abs_y
 
 
-def _hex_pixel_xy_km(h: Hex, hex_size_km: float) -> tuple[float, float]:
-    """Flat-top hex pixel centre in km. Mirrors ``plates._hex_to_xy``
-    (unitless) × ``hex_size_km``."""
+def hex_to_xy_km(h: Hex, hex_size_km: float) -> tuple[float, float]:
+    """Flat-top hex axial coord → cartesian pixel centre in km.
+
+    Canonical projection used everywhere worldgen converts a ``Hex`` to
+    physical (x, y) km. Mirrors ``plates._hex_to_xy`` (unitless) ×
+    ``hex_size_km``.
+    """
     return 1.5 * h.q * hex_size_km, _SQRT3 * (h.r + h.q / 2.0) * hex_size_km
 
 
@@ -98,19 +102,6 @@ def world_pixel_bounds(
     return w, h
 
 
-def hex_pixel_y_km(h: Hex, hex_size_km: float) -> float:
-    """Cartesian-pixel y in km for a hex. Used by the climate layer for
-    latitude derivation in a rectangular world (pixel_y instead of the
-    r-axis, since r isn't aligned with the world's north-south axis once
-    the world stops being a centred regular hexagon)."""
-    return _SQRT3 * (h.r + h.q / 2.0) * hex_size_km
-
-
-def hex_pixel_x_km(h: Hex, hex_size_km: float) -> float:
-    """Cartesian-pixel x in km for a hex (east-west axis)."""
-    return 1.5 * h.q * hex_size_km
-
-
 def normalized_radial_position(
     h: Hex,
     half_width_km: float,
@@ -129,6 +120,6 @@ def normalized_radial_position(
     d_max = min(half_width_km, half_height_km)
     if d_max <= 0:
         return 0.0
-    px, py = _hex_pixel_xy_km(h, hex_size_km)
+    px, py = hex_to_xy_km(h, hex_size_km)
     d = min(half_width_km - abs(px), half_height_km - abs(py))
     return max(0.0, min(1.0, 1.0 - d / d_max))

@@ -1,25 +1,16 @@
-"""Per-particle elevation derived from crust thickness + age.
+"""Per-cell elevation derived from crust thickness + age.
 
 Two physical models, one per crust type:
 
-  - **Continental:** isostatic equilibrium against a mantle column. The
-    elevation above the reference thickness is linear in the excess::
+  - **Continental:** isostatic equilibrium against a mantle column::
 
           elevation_km = (thickness − reference_thickness) × isostasy_factor
 
-    Continental thickening produces elevation gain — this is what
-    visualises mountain belts at the boundaries between converging
-    plates.
-
-  - **Oceanic:** half-space cooling. The ocean floor sinks with the
-    square root of age as the lithosphere cools and contracts::
+  - **Oceanic:** half-space cooling — ocean floor sinks with √(age)::
 
           depth_km = ridge_depth + ridge_subsidence_rate × √age,
                      capped at max_ocean_depth_km
 
-This is a small piece of what Phase 7 (full aging + erosion + isostasy)
-will own; we land it now because the visualisation in Phase 5/6 needs
-to colour particles by elevation to make the orogeny effect visible.
 """
 
 from __future__ import annotations
@@ -33,17 +24,15 @@ def particle_elevation_km(
     crust_type: np.ndarray,
     thickness_km: np.ndarray,
     age_myr: np.ndarray,
-    sim_config: SimConfig,
-) -> np.ndarray:
-    """Compute signed elevation (km) per particle.
+    sim_config: SimConfig) -> np.ndarray:
+    """Compute signed elevation (km) for each input cell.
 
     Negative = below sea level (ocean floor), zero ≈ sea level, positive
-    = above sea level (land / mountains). All inputs are ``(N,)`` arrays
-    parallel to the simulation state.
+    = above sea level. All inputs are array-shape-agnostic — flat ``(N)``,
+    2D ``(gy, gx)``, or anything else as long as shapes match.
     """
-    n = thickness_km.shape[0]
-    out = np.zeros(n, dtype=np.float64)
-    if n == 0:
+    out = np.zeros_like(thickness_km, dtype=np.float64)
+    if thickness_km.size == 0:
         return out
 
     cont_mask = (crust_type == CRUST_CONTINENTAL)
