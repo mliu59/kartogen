@@ -16,10 +16,12 @@ from tectonic_sim.noise import PerlinNoise2D, fbm_grid
 from tectonic_sim.rng import RngStream
 from tectonic_sim.types import CRUST_CONTINENTAL, WorldRect, crust_type_code
 
+from tectonic_sim.polygon_sim.edge_smoothing import apply_edge_smoothing
 from tectonic_sim.polygon_sim.topology import _cell_centres, _grid_dims
 from tectonic_sim.polygon_sim.types import (
     PolygonPlate,
     _CONTINENTAL_RELIEF_RNG_TAG,
+    _EDGE_SMOOTHING_RNG_TAG,
     _ROT_RNG_TAG,
     _VELOCITY_RNG_TAG,
     _VORONOI_RNG_TAG)
@@ -133,7 +135,8 @@ def _seed_plates(
 
 
 def _initial_state(
-    domain: WorldRect, sim_config, seed: int) -> tuple[list[PolygonPlate], float]:
+    domain: WorldRect, sim_config, seed: int,
+) -> tuple[list[PolygonPlate], float, dict]:
     """Build the per-plate paint grids using **domain-warped weighted
     Voronoi** against plate seed anchors.
 
@@ -282,6 +285,32 @@ def _initial_state(
     # they just sit very thin and dip below sea level after isostasy.
     g_thick = np.maximum(g_thick, 1.0)
 
+    # ----- Edge smoothing at t=0 (non-physics, see edge_smoothing.py).
+    # Captures pre/post thickness + the Perlin alpha field so the export
+    # can show the effect side-by-side. Owner / crust / age are not
+    # touched — only thickness gets blended.
+    t0_thick_pre = g_thick.copy()
+    if sim_config.edge_smoothing_apply_t0:
+        g_thick, t0_alpha = apply_edge_smoothing(
+            g_thick, g_owner, sim_config, domain, cell_km,
+            rng_seed=seed ^ _EDGE_SMOOTHING_RNG_TAG ^ 0,
+        )
+        # Re-clamp post-smooth — blur near oceanic strips could pull a
+        # continental cell below the floor.
+        g_thick = np.maximum(g_thick, 1.0)
+    else:
+        # Still produce a zeros alpha array so downstream renderers don't
+        # have to branch on None.
+        t0_alpha = np.zeros((gy, gx), dtype=np.float64)
+    t0_snapshot = {
+        "thickness_pre": t0_thick_pre,
+        "thickness_post": g_thick.copy(),
+        "alpha": t0_alpha,
+        "owner": g_owner.copy(),
+        "crust": g_crust.copy(),
+        "age": np.zeros((gy, gx), dtype=np.float64),
+    }
+
     # ----- Build per-plate state.
     vel_rng = np.random.Generator(np.random.PCG64(seed ^ _VELOCITY_RNG_TAG))
     plates: list[PolygonPlate] = []
@@ -295,16 +324,36 @@ def _initial_state(
         angle = float(vel_rng.uniform(0.0, 2.0 * np.pi))
         vx = speed * float(np.cos(angle))
         vy = speed * float(np.sin(angle))
+        cell_mask_init = mask.copy()
+        crust_init = np.where(mask, g_crust, 0).astype(np.int8)
+        age_init = np.zeros((gy, gx), dtype=np.float64)
+        thick_init = np.where(mask, g_thick, 0.0).astype(np.float64)
         plate = PolygonPlate(
             pid=int(ps.id),
             velocity_kmpy=np.array([vx, vy], dtype=np.float64),
-            accum=np.zeros(2, dtype=np.float64),
-            cell_mask=mask.copy(),
-            crust=np.where(mask, g_crust, 0).astype(np.int8),
-            age=np.zeros((gy, gx), dtype=np.float64),
-            thickness=np.where(mask, g_thick, 0.0).astype(np.float64),
-            polygon=None,   # filled by _re_extract_polygons in the sim loop
+            # Continuous pose: starts at identity (body == world at t=0).
+            position_km=np.zeros(2, dtype=np.float64),
+            orientation_rad=0.0,
+            # Body-frame canonical state — populated from the
+            # Voronoi-derived per-cell arrays.
+            body_mask=cell_mask_init.copy(),
+            body_crust=crust_init.copy(),
+            body_age=age_init.copy(),
+            body_thickness=thick_init.copy(),
+            # World-frame cached view — identical to body at t=0; will
+            # be regenerated each tick by ``rasterise``.
+            cell_mask=cell_mask_init,
+            crust=crust_init,
+            age=age_init,
+            thickness=thick_init,
+            polygon=None,
             alive=True)
+        # Seed baseline = identity world view so the first derasterise
+        # call (after the pre-loop cull) can diff cleanly.
+        plate._world_baseline_mask = cell_mask_init.copy()
+        plate._world_baseline_crust = crust_init.copy()
+        plate._world_baseline_age = age_init.copy()
+        plate._world_baseline_thickness = thick_init.copy()
         plates.append(plate)
 
     # Per-plate random angular velocity (deterministic via seed XOR).
@@ -312,5 +361,5 @@ def _initial_state(
     for p in plates:
         p.angular_velocity_rad_per_myr = float(rot_rng.uniform(
             -sim_config.init_angular_velocity_max_rad_per_myr, sim_config.init_angular_velocity_max_rad_per_myr))
-    return plates, cell_km
+    return plates, cell_km, t0_snapshot
 

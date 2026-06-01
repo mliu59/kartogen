@@ -20,8 +20,21 @@ from tectonic_sim.types import CRUST_CONTINENTAL, WorldRect
 
 @pytest.fixture
 def sim_config():
+    """Continental-relief fixture: loads the production sim config but
+    disables the non-physics edge smoothing pass. Edge smoothing
+    deliberately crosses plate AND crust-type boundaries (it's a global
+    blur), which breaks every per-plate / per-crust invariant these
+    tests check. The two features are orthogonal — the relief contract
+    is exercised here with smoothing off; the smoothing contract has
+    its own tests in ``tectonic_sim/tests/test_edge_smoothing.py``.
+    """
     from pathlib import Path
-    return load_sim_config_from_path(Path("config/tectonic_sim.toml"))
+    base = load_sim_config_from_path(Path("config/tectonic_sim.toml"))
+    return replace(
+        base,
+        edge_smoothing_apply_t0=False,
+        edge_smoothing_apply_tfinal=False,
+    )
 
 
 @pytest.fixture
@@ -56,8 +69,8 @@ def test_continental_relief_adds_variability(sim_config, domain) -> None:
     cfg_off = replace(sim_config, continental_relief_amplitude_km=0.0)
     cfg_on  = sim_config  # config default = 6 km amplitude
 
-    plates_off, _ = _initial_state(domain, cfg_off, seed=42)
-    plates_on,  _ = _initial_state(domain, cfg_on,  seed=42)
+    plates_off, _, _ = _initial_state(domain, cfg_off, seed=42)
+    plates_on,  _, _ = _initial_state(domain, cfg_on,  seed=42)
 
     t_off = _continental_thickness(plates_off)
     t_on  = _continental_thickness(plates_on)
@@ -82,8 +95,8 @@ def test_continental_relief_is_zero_mean_per_plate(sim_config, domain) -> None:
     cfg_off = replace(sim_config, continental_relief_amplitude_km=0.0)
     cfg_on  = sim_config
 
-    plates_off, _ = _initial_state(domain, cfg_off, seed=42)
-    plates_on,  _ = _initial_state(domain, cfg_on,  seed=42)
+    plates_off, _, _ = _initial_state(domain, cfg_off, seed=42)
+    plates_on,  _, _ = _initial_state(domain, cfg_on,  seed=42)
 
     means_off = _per_plate_continental_means(plates_off)
     means_on  = _per_plate_continental_means(plates_on)
@@ -108,8 +121,8 @@ def test_continental_relief_only_affects_continental_cells(
     cfg_off = replace(sim_config, continental_relief_amplitude_km=0.0)
     cfg_on  = sim_config
 
-    plates_off, _ = _initial_state(domain, cfg_off, seed=42)
-    plates_on,  _ = _initial_state(domain, cfg_on,  seed=42)
+    plates_off, _, _ = _initial_state(domain, cfg_off, seed=42)
+    plates_on,  _, _ = _initial_state(domain, cfg_on,  seed=42)
 
     # Pair plates by pid and compare oceanic thicknesses.
     off_by_pid = {p.pid: p for p in plates_off}
@@ -131,8 +144,8 @@ def test_continental_relief_only_affects_continental_cells(
 
 def test_continental_relief_deterministic(sim_config, domain) -> None:
     """Same (config, seed) → byte-identical thickness arrays."""
-    plates_a, _ = _initial_state(domain, sim_config, seed=7)
-    plates_b, _ = _initial_state(domain, sim_config, seed=7)
+    plates_a, _, _ = _initial_state(domain, sim_config, seed=7)
+    plates_b, _, _ = _initial_state(domain, sim_config, seed=7)
     for pa, pb in zip(plates_a, plates_b):
         np.testing.assert_array_equal(pa.thickness, pb.thickness)
 
@@ -144,8 +157,8 @@ def test_continental_relief_diverges_on_seed_change(sim_config, domain) -> None:
     distinct seeds must produce different perm tables and thus a
     different perturbation field.
     """
-    plates_a, _ = _initial_state(domain, sim_config, seed=1)
-    plates_b, _ = _initial_state(domain, sim_config, seed=2)
+    plates_a, _, _ = _initial_state(domain, sim_config, seed=1)
+    plates_b, _, _ = _initial_state(domain, sim_config, seed=2)
     t_a = _continental_thickness(plates_a)
     t_b = _continental_thickness(plates_b)
     # Different plate placements → can't compare cell-by-cell. Verify

@@ -334,3 +334,59 @@ continental_relief_amplitude_km = 10.0
 continental_relief_wavelength_km = 1000.0
 continental_relief_octaves = 4
 continental_relief_persistence = 0.5
+
+# --- Edge smoothing (non-physics) ---
+#
+# A Gaussian blur pass on crust thickness, weighted per-cell by a Perlin
+# alpha field. Runs at TWO sim instants only:
+#   - t=0 (right after seeding, after continental_relief noise)
+#   - t=final (after the last tick, before polygon construction)
+# Never per-tick. This is purely algorithmic edge softening — not
+# physics — so it stays separate from erosion in aging.py.
+#
+# How it works:
+#   blur(x, y) = gaussian_filter(thickness, sigma = kernel_km / cell_km)
+#   alpha(x, y) = perlin_field(x, y), normalised to [alpha_min, alpha_max]
+#   thickness(x, y) = (1 - alpha) * thickness + alpha * blur
+#
+# Knobs:
+#   apply_t0 / apply_tfinal — switch each pass on/off independently.
+#   kernel_km               — Gaussian sigma in km. Larger = wider blur.
+#                             50 km blends ~6 cells either side at the
+#                             default ~8 km cell.
+#   alpha_min, alpha_max    — blend bounds. alpha=0 keeps original sharp;
+#                             alpha=1 takes the fully blurred value.
+#                             [0.0, 0.7] gives variable softness with
+#                             some areas staying sharp.
+#   noise_wavelength_km     — Perlin scale. 600 km → a few smooth zones
+#                             vs sharp zones per continent-scale sim.
+#   noise_octaves / persistence — fBm depth + amplitude falloff.
+#
+# Two independent Perlin draws are used at t=0 vs t=final so the second
+# pass smooths the *evolved* sim, not the initial pattern again.
+edge_smoothing_apply_t0 = true
+edge_smoothing_apply_tfinal = true
+edge_smoothing_kernel_km = 25.0
+edge_smoothing_alpha_min = 0.0
+edge_smoothing_alpha_max = 0.5
+edge_smoothing_noise_wavelength_km = 600.0
+edge_smoothing_noise_octaves = 3
+edge_smoothing_noise_persistence = 0.5
+# Plate-boundary boost: an EXTRA alpha contribution added on top of the
+# Perlin field, concentrated near plate boundaries and decaying
+# exponentially inland.
+#
+#   alpha = clip(alpha_perlin + peak * exp(-d_km / falloff_km), 0, 1)
+#
+# where d_km is the distance (in km) from each cell to its nearest
+# plate-boundary cell.
+#
+#   peak       — extra alpha added right at the boundary itself. 0 disables
+#                the boost entirely (reduces to the pure Perlin pass).
+#                0.4 means boundary cells get +0.4 alpha on top of Perlin
+#                (clipped at 1). 1.0 slams alpha to the ceiling at sutures.
+#   falloff_km — exponential decay length. 30 km → ~37% strength at 30 km
+#                inland, ~14% at 60 km, ~5% at 90 km. Roughly the inland
+#                reach of "shelf-grade" smoothing.
+edge_smoothing_boundary_boost_peak = 0.4
+edge_smoothing_boundary_falloff_km = 30.0

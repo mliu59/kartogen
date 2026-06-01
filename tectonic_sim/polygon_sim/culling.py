@@ -172,7 +172,7 @@ def _cull_disconnected(
         _spawn_from_component(
             plates, plate_by_pid, comp_mask, iy, ix,
             paint_by_cell, parent_by_cell,
-            next_pid, gy, gx, spawn_rng)
+            next_pid, gy, gx, spawn_rng, sim_config)
         next_pid += 1
         n_spawned += 1
         n_redistributed += n_cells
@@ -236,17 +236,30 @@ def _spawn_from_component(
         -sim_config.init_angular_velocity_max_rad_per_myr * 0.5,
         sim_config.init_angular_velocity_max_rad_per_myr * 0.5))
 
+    # Inherit pose from the dominant parent so the spawned fragment
+    # starts in the same world-frame neighbourhood.
+    if parent is not None:
+        parent_pos = parent.position_km.copy()
+        parent_orient = float(parent.orientation_rad)
+    else:
+        parent_pos = np.zeros(2, dtype=np.float64)
+        parent_orient = 0.0
     new_plate = PolygonPlate(
         pid=new_pid,
         velocity_kmpy=np.array([new_vx, new_vy], dtype=np.float64),
-        accum=np.zeros(2, dtype=np.float64),
+        angular_velocity_rad_per_myr=new_omega,
+        position_km=parent_pos,
+        orientation_rad=parent_orient,
+        body_mask=new_mask.copy(),
+        body_crust=new_crust.copy(),
+        body_age=new_age.copy(),
+        body_thickness=new_thick.copy(),
         cell_mask=new_mask,
         crust=new_crust,
         age=new_age,
         thickness=new_thick,
-        polygon=None,   # rebuilt next tick
-        alive=True,
-        angular_velocity_rad_per_myr=new_omega)
+        polygon=None,
+        alive=True)
     plates.append(new_plate)
     plate_by_pid[new_pid] = new_plate
 

@@ -15,26 +15,29 @@ from tectonic_sim.polygon_sim.aging import (
     _apply_buoyancy_to_thickness,
     _apply_erosion,
     _apply_thinned_continental_absorption)
-from tectonic_sim.polygon_sim.contention import _global_owner, _resolve_contention
+from tectonic_sim.polygon_sim.contention import _resolve_contention
 from tectonic_sim.polygon_sim.culling import _cull_disconnected
 from tectonic_sim.polygon_sim.damping import _apply_velocity_damping
 from tectonic_sim.polygon_sim.divergent import _trailing_edge_fill
+from tectonic_sim.polygon_sim.edge_smoothing import apply_edge_smoothing
 from tectonic_sim.polygon_sim.fusion import _apply_fusion
 from tectonic_sim.polygon_sim.hotspots import (
     _apply_hotspot_eruptions,
     _apply_hotspot_prehistory,
     _initialize_hotspots)
-from tectonic_sim.polygon_sim.kinematics import _rotate_plates, _stamp_paint
+from tectonic_sim.polygon_sim.kinematics import _advance_pose
 from tectonic_sim.polygon_sim.momentum import _apply_momentum_exchange
 from tectonic_sim.polygon_sim.polygons import (
     _build_polygons_for_render,
     _mark_dead_small_plates)
+from tectonic_sim.polygon_sim.rasterize import derasterise, rasterise
 from tectonic_sim.polygon_sim.rifting import _rift_plate
 from tectonic_sim.polygon_sim.seeding import _initial_state
 from tectonic_sim.polygon_sim.topology import _cell_centres, _grid_dims
 from tectonic_sim.polygon_sim.types import (
     PolygonPlate,
     _ACCRETION_RNG_TAG,
+    _EDGE_SMOOTHING_RNG_TAG,
     _HOTSPOT_RNG_TAG,
     _RIFT_RNG_TAG,
     _SPAWN_RNG_TAG)
@@ -63,7 +66,7 @@ def simulate_rigid_polygon(
     frames) is the full sim domain — callers that want a sub-region
     apply their own slicing.
     """
-    plates, cell_km = _initial_state(domain, sim_config, seed)
+    plates, cell_km, t0_snapshot = _initial_state(domain, sim_config, seed)
     gy, gx, _ = _grid_dims(domain, sim_config)
     cell_xy = _cell_centres(gy, gx, cell_km)
     rift_rng = np.random.Generator(np.random.PCG64(seed ^ _RIFT_RNG_TAG))
@@ -160,6 +163,9 @@ def simulate_rigid_polygon(
     total_redistributed += redist
     total_spawned += spawn
     _mark_dead_small_plates(plates)
+    # Flush the initial cull into the body frame so it survives the
+    # rasterise pass at the top of tick 1.
+    derasterise(plates, domain, gy, gx, cell_km)
     capture(0)
 
     total_collisions = 0
@@ -180,9 +186,16 @@ def simulate_rigid_polygon(
         range(1, sim_config.n_ticks + 1),
         desc="sim", unit="tick", leave=True, dynamic_ncols=True)
     for tick in tick_iter:
-        prev_owner = _global_owner(plates, gy, gx)
-        _stamp_paint(plates, dt, cell_km)
-        _rotate_plates(plates, dt, domain, gy, gx, cell_km)
+        # 1) Continuous kinematics: just advance the pose. No paint
+        #    resampling; the body-frame arrays stay put.
+        _advance_pose(plates, dt, domain)
+
+        # 2) Rasterise body → world for every plate. Fills each plate's
+        #    cached cell_mask / crust / age / thickness with the world
+        #    view at the new pose. All per-tick modules below read
+        #    these as before.
+        rasterise(plates, domain, gy, gx, cell_km)
+
         # Momentum exchange BEFORE damping: per-pair normal-direction
         # impulse equalises approach velocity along contact normals.
         # Damping then handles residual tangential / self-friction.
@@ -191,7 +204,16 @@ def simulate_rigid_polygon(
         _apply_velocity_damping(plates, sim_config)
         total_fusions += _apply_fusion(plates, sim_config)
         _resolve_contention(plates, gy, gx, sim_config, cell_km)
-        _trailing_edge_fill(plates, prev_owner, sim_config, gy, gx)
+        # Divergent trailing-edge fill: nearest-plate gap assignment.
+        # As plates drift apart their world-frame coverage shrinks at
+        # the trailing edge; the gap cells get assigned to whichever
+        # plate's position_km is closest (wrap-aware), stamped fresh
+        # age-0 oceanic. Models mid-ocean-ridge spawn on the receding
+        # plate's side.
+        _trailing_edge_fill(
+            plates, sim_config, gy, gx,
+            cell_km=cell_km, domain=domain,
+        )
         _apply_aging(plates, dt)
         total_accreted += _apply_co_accretion(
             plates, gy, gx, sim_config, cell_km, rng=accretion_rng,
@@ -222,6 +244,10 @@ def simulate_rigid_polygon(
                 total_spawned += spawn
                 _mark_dead_small_plates(plates)
                 n_rifts += 1
+
+        # 3) Flush world-view changes back into the body frame so the
+        #    canonical state stays current for the next tick.
+        derasterise(plates, domain, gy, gx, cell_km)
 
         if tick % 10 == 0:
             alive = sum(1 for p in plates if p.alive)
@@ -263,6 +289,40 @@ def simulate_rigid_polygon(
     # Bake buoyancy for the render.
     _apply_buoyancy_to_thickness(plates, sim_config)
 
+    # ----- Edge smoothing at t=final (non-physics).
+    # Same mechanic as the t=0 pass — Perlin-modulated Gaussian blur on
+    # thickness — but with an independent Perlin draw so the second pass
+    # smooths the *evolved* sim, not the initial-condition pattern.
+    # We blur the GLOBAL thickness field (so smoothing crosses plate
+    # boundaries) and scatter the result back into each plate's paint
+    # grid. Owner / crust / age are unchanged.
+    owner_pre, crust_pre, age_pre, thick_pre = _flatten_state(plates, gy, gx)
+    if sim_config.edge_smoothing_apply_tfinal:
+        thick_post, tfinal_alpha = apply_edge_smoothing(
+            thick_pre, owner_pre, sim_config, domain, cell_km,
+            rng_seed=seed ^ _EDGE_SMOOTHING_RNG_TAG ^ 1,
+        )
+        thick_post = np.maximum(thick_post, 1.0)
+        # Scatter back into each alive plate's per-cell thickness so
+        # downstream consumers (polygon construction, isostasy, sampling)
+        # see the smoothed values.
+        for p in plates:
+            if not p.alive:
+                continue
+            m = p.cell_mask
+            p.thickness = np.where(m, thick_post, p.thickness).astype(np.float64)
+    else:
+        thick_post = thick_pre.copy()
+        tfinal_alpha = np.zeros((gy, gx), dtype=np.float64)
+    tfinal_snapshot = {
+        "thickness_pre": thick_pre,
+        "thickness_post": thick_post,
+        "alpha": tfinal_alpha,
+        "owner": owner_pre,
+        "crust": crust_pre,
+        "age": age_pre,
+    }
+
     # Build the per-plate alpha-complex ONCE, at the end. It's only
     # consumed by polygons.png at render time — building it every
     # tick during the sim was wasted work.
@@ -270,7 +330,8 @@ def simulate_rigid_polygon(
     owner, crust, age, thick = _flatten_state(plates, gy, gx)
     return (
         plates, owner, crust, age, thick, cell_km, timeline,
-        frames, frames_thickness, frames_topography, hotspots)
+        frames, frames_thickness, frames_topography, hotspots,
+        t0_snapshot, tfinal_snapshot)
 
 
 def _flatten_state(

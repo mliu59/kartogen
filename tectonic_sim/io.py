@@ -75,6 +75,12 @@ class SimState:
     ridge_depth_km: float
     ridge_subsidence_rate: float
     max_ocean_depth_km: float
+    # Edge-smoothing Perlin alpha fields at t=0 / t=final (same shape as
+    # ``thickness``). Useful for transect / probe tools that want to
+    # correlate observed smoothness against the smoothing pattern. Zero-
+    # filled when the relevant pass was disabled.
+    edge_smoothing_alpha_t0: np.ndarray
+    edge_smoothing_alpha_tfinal: np.ndarray
 
     @property
     def gy(self) -> int:
@@ -120,6 +126,8 @@ _NPZ_KEYS = (
     "ridge_depth_km",
     "ridge_subsidence_rate",
     "max_ocean_depth_km",
+    "edge_smoothing_alpha_t0",
+    "edge_smoothing_alpha_tfinal",
 )
 
 
@@ -140,6 +148,15 @@ def save_state(path: Path, raw_snapshot: dict) -> None:
         )
     sim_domain: WorldRect = raw_snapshot["sim_domain"]
     cfg = raw_snapshot["sim_config"]
+    gy, gx = raw_snapshot["owner"].shape
+    # Edge-smoothing alpha fields default to zeros when the snapshot
+    # doesn't carry them (e.g. an older raw_snapshot path); this also
+    # covers the "smoothing disabled" case where the simulate orchestrator
+    # already wrote zeros into the snapshot.
+    t0_snap = raw_snapshot.get("t0_smoothing", {})
+    tfinal_snap = raw_snapshot.get("tfinal_smoothing", {})
+    alpha_t0 = t0_snap.get("alpha", np.zeros((gy, gx), dtype=np.float64))
+    alpha_tfinal = tfinal_snap.get("alpha", np.zeros((gy, gx), dtype=np.float64))
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
@@ -159,6 +176,8 @@ def save_state(path: Path, raw_snapshot: dict) -> None:
         ridge_depth_km=np.float64(cfg.ridge_depth_km),
         ridge_subsidence_rate=np.float64(cfg.ridge_subsidence_rate),
         max_ocean_depth_km=np.float64(cfg.max_ocean_depth_km),
+        edge_smoothing_alpha_t0=alpha_t0.astype(np.float64, copy=False),
+        edge_smoothing_alpha_tfinal=alpha_tfinal.astype(np.float64, copy=False),
     )
 
 
@@ -190,4 +209,8 @@ def load_state(path: Path) -> SimState:
             ridge_depth_km=float(data["ridge_depth_km"]),
             ridge_subsidence_rate=float(data["ridge_subsidence_rate"]),
             max_ocean_depth_km=float(data["max_ocean_depth_km"]),
+            edge_smoothing_alpha_t0=np.asarray(
+                data["edge_smoothing_alpha_t0"], dtype=np.float64),
+            edge_smoothing_alpha_tfinal=np.asarray(
+                data["edge_smoothing_alpha_tfinal"], dtype=np.float64),
         )

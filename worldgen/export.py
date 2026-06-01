@@ -33,6 +33,8 @@ from dataclasses import dataclass, fields, is_dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from worldgen._log import configure_logging
 from worldgen.config_loader import load_worldgen_config
 from worldgen.hex import Hex
@@ -412,6 +414,131 @@ def _export_polygon_views(out_dir: Path, snap: dict) -> None:
     # signed elevation along arbitrary paths without re-running the sim.
     from tectonic_sim import save_state
     save_state(out_dir / "state.npz", snap)
+    # 10. edge_smoothing/ — pre/post topography + alpha PNGs at t=0
+    # and t=final. Always rendered (the snapshots are always built;
+    # when smoothing is disabled, pre == post and alpha is all zeros,
+    # so the comparison still reads correctly).
+    if "t0_smoothing" in snap and "tfinal_smoothing" in snap:
+        _export_edge_smoothing_views(
+            out_dir / "edge_smoothing",
+            t0_snap=snap["t0_smoothing"],
+            tfinal_snap=snap["tfinal_smoothing"],
+            sim_config=sim_cfg, cell_km=cell_km, upscale=upscale,
+        )
+
+
+def _export_edge_smoothing_views(
+    out_dir: Path,
+    *,
+    t0_snap: dict,
+    tfinal_snap: dict,
+    sim_config,
+    cell_km: float,
+    upscale: int,
+) -> None:
+    """Render the four topography panels (t0 pre/post, tfinal pre/post)
+    plus alpha-field heatmaps and a 2x2 comparison grid into ``out_dir``.
+
+    Inputs are the snapshots packed by polygon_sim/simulate.py — each
+    holds ``owner``, ``crust``, ``age``, ``thickness_pre``,
+    ``thickness_post``, ``alpha`` arrays at the sim grid shape.
+    """
+    from PIL import Image, ImageDraw, ImageFont
+
+    from tectonic_sim.polygon_sim import build_topography_image
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def _render_topo(snap: dict, which: str, label: str) -> None:
+        thick = snap["thickness_pre"] if which == "pre" else snap["thickness_post"]
+        img = build_topography_image(
+            snap["owner"], snap["crust"], snap["age"], thick,
+            sim_config, label,
+            cell_km=cell_km, upscale=upscale,
+        )
+        img.save(out_dir / f"topo_{label.replace(' ', '_')}.png")
+        return img
+
+    t0_pre_img = _render_topo(t0_snap, "pre",  "t0_pre")
+    t0_post_img = _render_topo(t0_snap, "post", "t0_post")
+    tf_pre_img = _render_topo(tfinal_snap, "pre",  "tfinal_pre")
+    tf_post_img = _render_topo(tfinal_snap, "post", "tfinal_post")
+
+    # Alpha field heatmaps — single-channel grayscale where bright = high
+    # smoothing strength. Uses the same upscale so it lines up visually
+    # with the topo panels.
+    def _alpha_img(alpha: np.ndarray, label: str) -> Image.Image:
+        gy, gx = alpha.shape
+        a = np.clip(alpha, 0.0, 1.0)
+        rgb = np.stack([
+            (a * 255).astype(np.uint8),
+            (a * 255).astype(np.uint8),
+            (a * 255).astype(np.uint8),
+        ], axis=-1)
+        big = np.repeat(np.repeat(rgb, upscale, axis=0), upscale, axis=1)
+        img = Image.fromarray(big, "RGB")
+        ImageDraw.Draw(img).text(
+            (6, 6),
+            f"{label}  alpha range [{float(a.min()):.2f}, {float(a.max()):.2f}]",
+            fill=(255, 255, 255), stroke_width=2, stroke_fill=(0, 0, 0))
+        return img
+
+    a_t0_img = _alpha_img(t0_snap["alpha"], "alpha t=0")
+    a_tf_img = _alpha_img(tfinal_snap["alpha"], "alpha t=final")
+    a_t0_img.save(out_dir / "alpha_t0.png")
+    a_tf_img.save(out_dir / "alpha_tfinal.png")
+
+    # 2x2 grid: rows = (t=0, t=final), cols = (pre, post). All four
+    # panels are the same size, so a simple paste is enough.
+    try:
+        title_font = ImageFont.truetype("arial.ttf", size=18)
+        small_font = ImageFont.truetype("arial.ttf", size=14)
+    except OSError:
+        title_font = ImageFont.load_default()
+        small_font = title_font
+
+    pw, ph = t0_pre_img.size
+    margin = 30
+    header_h = 60
+    sub_h = 24
+    grid_w = margin + pw + margin + pw + margin
+    grid_h = header_h + sub_h + ph + sub_h + ph + margin
+    grid = Image.new("RGB", (grid_w, grid_h), (245, 245, 245))
+    draw = ImageDraw.Draw(grid)
+    draw.text(
+        (margin, 14),
+        "Edge smoothing — topography before / after",
+        fill=(20, 20, 20), font=title_font)
+    sub_text = (
+        f"kernel={sim_config.edge_smoothing_kernel_km:g} km   "
+        f"alpha=[{sim_config.edge_smoothing_alpha_min:g}, "
+        f"{sim_config.edge_smoothing_alpha_max:g}]   "
+        f"Perlin wavelength={sim_config.edge_smoothing_noise_wavelength_km:g} km   "
+        f"apply: t0={sim_config.edge_smoothing_apply_t0} "
+        f"tfinal={sim_config.edge_smoothing_apply_tfinal}"
+    )
+    draw.text((margin, 38), sub_text, fill=(40, 40, 40), font=small_font)
+    col_x = (margin, margin + pw + margin)
+    row_y = (header_h + sub_h, header_h + sub_h + ph + sub_h)
+    # Column / row labels.
+    draw.text((col_x[0] + pw / 2, header_h + 2), "PRE",
+              fill=(20, 20, 20), font=small_font, anchor="ma")
+    draw.text((col_x[1] + pw / 2, header_h + 2), "POST",
+              fill=(20, 20, 20), font=small_font, anchor="ma")
+    draw.text((col_x[0] + pw / 2, row_y[1] - sub_h + 2),
+              "(POST same row →)", fill=(140, 140, 140), font=small_font,
+              anchor="ma")
+    # Row labels along the LEFT margin, rotated would be nicer but PIL
+    # text rotation needs a separate render; readable as-is.
+    draw.text((4, row_y[0] + ph / 2), "t=0",
+              fill=(20, 20, 20), font=small_font, anchor="lm")
+    draw.text((4, row_y[1] + ph / 2), "t=final",
+              fill=(20, 20, 20), font=small_font, anchor="lm")
+    grid.paste(t0_pre_img,  (col_x[0], row_y[0]))
+    grid.paste(t0_post_img, (col_x[1], row_y[0]))
+    grid.paste(tf_pre_img,  (col_x[0], row_y[1]))
+    grid.paste(tf_post_img, (col_x[1], row_y[1]))
+    grid.save(out_dir / "comparison.png")
 
 
 def export_world(
@@ -581,6 +708,8 @@ def _exec_under_pyspy(args: argparse.Namespace) -> None:
     target_cmd += ["--config", str(args.config)]
     target_cmd += ["--out", str(args.out)]
     target_cmd += ["--hex-px", str(args.hex_px)]
+    if args.param_temperature is not None:
+        target_cmd += ["--param-temperature", str(args.param_temperature)]
     if args.stop_after is not None:
         target_cmd += ["--stop-after", args.stop_after]
     if args.quiet:
@@ -630,6 +759,15 @@ def main() -> None:
     parser.add_argument("--out", type=Path, default=Path("exports"))
     parser.add_argument("--hex-px", type=float, default=6.0)
     parser.add_argument(
+        "--param-temperature", type=float, default=None,
+        help=(
+            "Override WorldgenConfig.param_temperature. 0 = fully deterministic; "
+            "values >0 perturb subsystem physics (currently just tectonics) "
+            "with spread proportional to T. Default: use the value from the "
+            "config file."
+        ),
+    )
+    parser.add_argument(
         "--stop-after", choices=PIPELINE_STEPS, default=None,
         help=(
             "Stop the pipeline after this step (default: run all). "
@@ -671,6 +809,9 @@ def main() -> None:
         configure_logging(logging.DEBUG)
 
     cfg = load_worldgen_config(args.config)
+    if args.param_temperature is not None:
+        from dataclasses import replace as _dc_replace
+        cfg = _dc_replace(cfg, param_temperature=float(args.param_temperature))
     folder = export_world(
         config=cfg,
         seed=args.seed,

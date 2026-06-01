@@ -258,6 +258,31 @@ _SIM_CONFIG_RANDOMIZERS: tuple[FieldRandomizer, ...] = (
     FieldRandomizer("continental_relief_persistence",
                     std=0.1, minimum=0.2, maximum=0.7),
 
+    # --- Edge smoothing (non-physics) ---
+    # Kernel: visible-effect range. <10 km is essentially a no-op; >200 km
+    # smears continents into the ocean. 50 km is a comfortable centre.
+    FieldRandomizer("edge_smoothing_kernel_km",
+                    std=15.0, minimum=5.0, maximum=200.0),
+    # Alpha-max: the loudness knob. Std ~0.2 covers near-off (~0.3) to
+    # near-uniform (~1.0) at T=1.
+    FieldRandomizer("edge_smoothing_alpha_max",
+                    std=0.15, minimum=0.0, maximum=1.0),
+    # Wavelength: how big the "smooth zones vs sharp zones" patches are.
+    # 200 km — speckly modulation; 1500 km — half-continent zones.
+    FieldRandomizer("edge_smoothing_noise_wavelength_km",
+                    std=200.0, minimum=200.0, maximum=2000.0),
+    # Boundary boost peak: extra alpha right at plate sutures. Std 0.15
+    # at T=1 walks the default 0.4 across the visible-effect range
+    # [0.1, 0.7]; floored at 0 (= no boost), capped at 1 (= alpha pinned
+    # to ceiling at boundaries).
+    FieldRandomizer("edge_smoothing_boundary_boost_peak",
+                    std=0.15, minimum=0.0, maximum=1.0),
+    # Boundary falloff length: how far inland the boost reaches.
+    # 10 km → very thin coastal smear; 100 km → broad shelf-grade
+    # smoothing inland from every suture.
+    FieldRandomizer("edge_smoothing_boundary_falloff_km",
+                    std=15.0, minimum=5.0, maximum=120.0),
+
     # --- Velocity damping ---
     FieldRandomizer("velocity_damping_strength",
                     std=0.03, minimum=0.0, maximum=0.30),

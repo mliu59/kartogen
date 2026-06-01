@@ -38,6 +38,7 @@ _VORONOI_RNG_TAG: int = 0xE005
 _ACCRETION_RNG_TAG: int = 0xD004
 _HOTSPOT_RNG_TAG: int = 0xF006
 _CONTINENTAL_RELIEF_RNG_TAG: int = 0x1007
+_EDGE_SMOOTHING_RNG_TAG: int = 0x1008
 
 
 # ---------------------------------------------------------------------------
@@ -69,19 +70,58 @@ AlphaComplex = tuple[Delaunay, np.ndarray, np.ndarray]
 class PolygonPlate:
     """Rigid-polygon plate state.
 
-    The plate carries its own per-cell paint grids that travel with it
-    via integer-shift stamping (translation) and centroid-relative
-    rotation each tick. The polygon is the alpha-complex of the plate's
-    owned-cell centres — derived from ``cell_mask`` each tick, used for
-    visualisation and as the rigid-body conceptual model.
+    The plate is modelled as **continuous polygons in km-space**: each
+    plate has a body frame (centred at the plate's body origin, axis-
+    aligned to the body) plus a world-frame pose (``position_km``,
+    ``orientation_rad``). The body-frame paint arrays (``body_mask`` /
+    ``body_crust`` / ``body_age`` / ``body_thickness``) are the canonical
+    primary state. World-frame views (``cell_mask`` / ``crust`` /
+    ``age`` / ``thickness``) are CACHED — regenerated each tick by
+    rasterising body-frame state through the current pose.
+
+    Kinematics are continuous: each tick ``position_km`` and
+    ``orientation_rad`` get incremented by ``velocity_kmpy * dt`` and
+    ``angular_velocity_rad_per_myr * dt`` respectively. No per-tick
+    NN/bilinear resampling of the paint arrays — that previously caused
+    rotation to be invisible because per-tick angles were sub-cell at
+    typical plate sizes.
+
+    Per-tick modules read the world-frame views as before. Changes they
+    make to those views (loser-clears, accretion, hotspots, aging,
+    erosion, …) are propagated back into the body frame by an inverse
+    rasterisation pass at the end of each tick, so the body snapshot
+    stays current.
     """
     pid: int
     velocity_kmpy: np.ndarray            # (2,) float64
-    accum: np.ndarray                    # (2,) float64 — sub-cell carry
-    cell_mask: np.ndarray                # (gy, gx) bool
-    crust: np.ndarray                    # (gy, gx) int8
-    age: np.ndarray                      # (gy, gx) float64
-    thickness: np.ndarray                # (gy, gx) float64
+    angular_velocity_rad_per_myr: float = 0.0
+
+    # --- Continuous pose in world km-space ---
+    # World-frame position of the body origin (the body-frame point that
+    # was at (0, 0) when the plate was seeded). Updated by continuous
+    # kinematics each tick. Wrapped to the torus.
+    position_km: np.ndarray = None  # type: ignore[assignment]
+    # World-frame orientation of the body axes (radians, counter-clockwise).
+    orientation_rad: float = 0.0
+
+    # --- Body-frame canonical state (primary) ---
+    # All four arrays share the same (gy, gx) shape as the world grid,
+    # but they live in BODY coordinates. They DO NOT move per tick —
+    # only the (position_km, orientation_rad) transform changes.
+    body_mask: np.ndarray = None       # type: ignore[assignment]
+    body_crust: np.ndarray = None      # type: ignore[assignment]
+    body_age: np.ndarray = None        # type: ignore[assignment]
+    body_thickness: np.ndarray = None  # type: ignore[assignment]
+
+    # --- World-frame views (CACHED — regenerated each tick) ---
+    # Per-tick modules read these as if they were the primary state.
+    # They get rebuilt at the top of each tick by rasterise(), and
+    # any per-tick mutations are flushed back to the body-frame state
+    # by derasterise() at the end of the tick.
+    cell_mask: np.ndarray = None    # type: ignore[assignment]
+    crust: np.ndarray = None        # type: ignore[assignment]
+    age: np.ndarray = None          # type: ignore[assignment]
+    thickness: np.ndarray = None    # type: ignore[assignment]
+
     polygon: AlphaComplex | None = None  # derived
     alive: bool = True
-    angular_velocity_rad_per_myr: float = 0.0

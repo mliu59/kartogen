@@ -162,6 +162,7 @@ def simulate_tectonics_via_continuous_sim(
     (
         polygon_plates, owner, crust, age, thick, cell_km, timeline,
         frames, frames_thickness, frames_topography, hotspots,
+        t0_snapshot, tfinal_snapshot,
     ) = out
     _log.info(
         "polygon_sim done: sim grid %dx%d (cell=%.1fkm, sim=%gx%g km, "
@@ -211,6 +212,13 @@ def simulate_tectonics_via_continuous_sim(
             "frames": frames,
             "frames_thickness": frames_thickness,
             "frames_topography": frames_topography,
+            # Edge-smoothing pre/post snapshots — non-physics blur of
+            # crust thickness applied at t=0 (after seeding) and t=final
+            # (after the last tick). See polygon_sim/edge_smoothing.py.
+            # Both dicts carry "owner", "crust", "age", "thickness_pre",
+            # "thickness_post", "alpha" arrays at the sim grid shape.
+            "t0_smoothing": t0_snapshot,
+            "tfinal_smoothing": tfinal_snapshot,
         },
     )
 

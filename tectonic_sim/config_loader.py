@@ -96,6 +96,16 @@ _REQUIRED_KEYS: tuple[str, ...] = (
     "continental_relief_wavelength_km",
     "continental_relief_octaves",
     "continental_relief_persistence",
+    "edge_smoothing_apply_t0",
+    "edge_smoothing_apply_tfinal",
+    "edge_smoothing_kernel_km",
+    "edge_smoothing_alpha_min",
+    "edge_smoothing_alpha_max",
+    "edge_smoothing_noise_wavelength_km",
+    "edge_smoothing_noise_octaves",
+    "edge_smoothing_noise_persistence",
+    "edge_smoothing_boundary_boost_peak",
+    "edge_smoothing_boundary_falloff_km",
 )
 
 
@@ -265,5 +275,35 @@ def load_sim_config(table: dict[str, object]) -> SimConfig:
         ),
         continental_relief_persistence=float(
             table["continental_relief_persistence"]  # type: ignore[arg-type]
+        ),
+        edge_smoothing_apply_t0=bool(
+            table["edge_smoothing_apply_t0"]  # type: ignore[arg-type]
+        ),
+        edge_smoothing_apply_tfinal=bool(
+            table["edge_smoothing_apply_tfinal"]  # type: ignore[arg-type]
+        ),
+        edge_smoothing_kernel_km=float(
+            table["edge_smoothing_kernel_km"]  # type: ignore[arg-type]
+        ),
+        edge_smoothing_alpha_min=float(
+            table["edge_smoothing_alpha_min"]  # type: ignore[arg-type]
+        ),
+        edge_smoothing_alpha_max=float(
+            table["edge_smoothing_alpha_max"]  # type: ignore[arg-type]
+        ),
+        edge_smoothing_noise_wavelength_km=float(
+            table["edge_smoothing_noise_wavelength_km"]  # type: ignore[arg-type]
+        ),
+        edge_smoothing_noise_octaves=int(
+            table["edge_smoothing_noise_octaves"]  # type: ignore[arg-type]
+        ),
+        edge_smoothing_noise_persistence=float(
+            table["edge_smoothing_noise_persistence"]  # type: ignore[arg-type]
+        ),
+        edge_smoothing_boundary_boost_peak=float(
+            table["edge_smoothing_boundary_boost_peak"]  # type: ignore[arg-type]
+        ),
+        edge_smoothing_boundary_falloff_km=float(
+            table["edge_smoothing_boundary_falloff_km"]  # type: ignore[arg-type]
         ),
     )

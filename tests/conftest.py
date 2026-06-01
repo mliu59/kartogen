@@ -22,7 +22,12 @@ from worldgen.types import WorldgenConfig, WorldShape
 def _with_shape(
     cfg: WorldgenConfig, width_km: float, height_km: float,
 ) -> WorldgenConfig:
-    """Return a copy of ``cfg`` with its ``world`` shape replaced."""
+    """Return a copy of ``cfg`` with its ``world`` shape replaced.
+
+    The edge-smoothing override lives on ``default_worldgen_config`` so
+    every downstream fixture and every test that builds a world from
+    that fixture inherits it — no per-fixture handling needed here.
+    """
     return dataclasses.replace(
         cfg, world=WorldShape(width_km=width_km, height_km=height_km),
     )
@@ -30,9 +35,33 @@ def _with_shape(
 
 @pytest.fixture(scope="session")
 def default_worldgen_config() -> WorldgenConfig:
-    """Worldgen parameters loaded from ``config/worldgen.toml``."""
-    return load_worldgen_config(
+    """Worldgen parameters loaded from ``config/worldgen.toml`` — with
+    the non-physics edge-smoothing pass DISABLED.
+
+    Edge smoothing is a Perlin-modulated Gaussian blur on crust
+    thickness whose kernel is sized in physical km. Production-tuned
+    defaults (kernel ≈25 km) are correct for production-sized worlds
+    (≥1000 km) but become catastrophic on the tiny worlds these tests
+    use (~100-300 km) — sigma in cells gets large enough relative to
+    the grid to flatten land/ocean diversity. Every other worldgen
+    test treats thickness as the un-smoothed simulation output; we
+    keep that contract by turning smoothing off here.
+
+    The smoothing's own correctness lives in
+    ``tectonic_sim/tests/test_edge_smoothing.py`` (unit tests of the
+    operator). End-to-end smoothing behaviour is exercised by the
+    ``python -m worldgen`` smoke runs on the production-sized config.
+    """
+    cfg = load_worldgen_config(
         Path(__file__).parent.parent / "config" / "worldgen.toml"
+    )
+    return dataclasses.replace(
+        cfg,
+        tectonics=dataclasses.replace(
+            cfg.tectonics,
+            edge_smoothing_apply_t0=False,
+            edge_smoothing_apply_tfinal=False,
+        ),
     )
 
 

@@ -155,6 +155,42 @@ culling as a per-tick pipeline. See `tectonic_sim/polygon_sim/` for the
 authoritative implementation; the worldgen side does not know or care
 about the per-tick order.
 
+**Continuous-pose architecture.** Each plate carries a **continuous
+world pose** (`position_km`, `orientation_rad`) plus continuous
+kinematic rates (`velocity_kmpy`, `angular_velocity_rad_per_myr`).
+Per-cell paint arrays (`body_mask`, `body_crust`, `body_age`,
+`body_thickness`) are the **canonical body-frame state** — they
+*don't move* per tick; only the pose does. Each tick:
+
+  1. ``_advance_pose`` — pure scalar addition: ``position_km += v·dt``,
+     ``orientation_rad += ω·dt``. No grid resampling, no aliasing.
+  2. ``rasterise`` (in `polygon_sim/rasterize.py`) — for each plate,
+     for each world cell, transform to body coords via the inverse
+     pose, NN-sample the body arrays. Populates the plate's cached
+     world-frame view (``cell_mask`` / ``crust`` / ``age`` /
+     ``thickness``). Also snapshots a *baseline* for the diff at the
+     end of the tick.
+  3. All existing per-tick modules (contention, fusion, momentum,
+     accretion, hotspots, aging, erosion, absorption, divergent fill,
+     culling, rifting) operate on the world-frame view as before.
+     They read and mutate ``p.cell_mask``, ``p.crust``, etc.
+  4. ``derasterise`` — diff the post-module world view against the
+     baseline, propagate only the *changes* (added cells, removed
+     cells, in-place paint mutations) back to each plate's body
+     frame via NN inverse transform. Unchanged cells leave body
+     untouched, so the body↔world round-trip is mass-preserving for
+     cells no module modified.
+
+This replaces the previous discrete-step kinematics
+(``np.roll`` translation + NN/bilinear inverse-resample rotation),
+which had two flaws: (a) NN aliasing erased per-tick rotation under
+~1° angles, making rotation invisible at typical plate sizes;
+(b) a global trail-fill stage refilled rotation-vacated cells with
+fresh oceanic, plugging the visible signal. Under the new
+architecture, plate outlines visibly rotate as organic shapes;
+``_trailing_edge_fill`` is now a nearest-plate gap-assignment for
+divergent boundary spawn only.
+
 **Continental collisions build asymmetric inland fold-belts on BOTH
 plates.** C-C contention distributes folded mass into two belts:
 
@@ -185,6 +221,38 @@ inland basins. Knobs: `continental_relief_amplitude_km`,
 `continental_relief_persistence`. 0 amplitude disables. Combines
 naturally with the decoupled sea-level knob — one sim run yields a
 family of geographies as `sea_level_km` sweeps.
+
+**Edge smoothing is a non-physics blur of crust thickness, applied at
+t=0 and t=final only.** Lives in `polygon_sim/edge_smoothing.py` —
+*deliberately* separate from erosion in `aging.py`. Each pass blends
+per-cell:
+`thickness = (1 − α) · thickness + α · gaussian_filter(thickness)`
+where α is built from two contributions:
+
+  - **Perlin α field** — normalised into
+    `[edge_smoothing_alpha_min, edge_smoothing_alpha_max]`. Same idea
+    as continental_relief noise: large-wavelength patches of "smooth
+    zones" alternating with "sharp zones" across the sim.
+  - **Plate-boundary boost** —
+    `peak · exp(−d_km / falloff_km)` where `d_km` is the toroidal
+    distance from each cell to its nearest plate-boundary cell.
+    Adds extra smoothing right at sutures, decaying inland.
+    `edge_smoothing_boundary_boost_peak = 0` disables it (pure Perlin
+    pass). The distance transform tiles the boundary mask 3× to honor
+    the torus wrap correctly.
+
+Final α is `clip(perlin + boost, 0, 1)`. Gaussian σ comes from
+`edge_smoothing_kernel_km / cell_km`; the filter uses toroidal wrap so
+blur respects the seam. Two passes run with independent Perlin draws
+(separate RNG-tag offsets) so the t=final pass smooths the *evolved*
+sim rather than the initial pattern. Smoothing is global — it crosses
+plate boundaries — which is why sharp boundaries between adjacent
+plates get spatially-modulated softening: some edges stay jagged where
+α is low, others smear into shelves where α is high, and *all*
+boundaries get a configurable baseline smoothing via the boost. The
+pre/post thickness arrays + α fields at both instants flow through
+`raw_snapshot` to `tectonic_sim_views/edge_smoothing/{topo_*.png,
+alpha_*.png, comparison.png}` for inspection.
 
 **Boundary mode is torus-only.** Every spatial query inside
 `tectonic_sim` uses the toroidal shortest-path metric.

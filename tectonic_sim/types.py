@@ -300,3 +300,37 @@ class SimConfig:
     continental_relief_wavelength_km: float
     continental_relief_octaves: int
     continental_relief_persistence: float
+
+    # --- Edge smoothing (non-physics) ---
+    #
+    # A Gaussian-blur pass applied to crust thickness, weighted per-cell
+    # by a Perlin alpha field. Runs at exactly two points in the sim:
+    #
+    #   - t=0 (after seeding, post continental_relief)
+    #   - t=final (after the last tick, before polygon construction)
+    #
+    # It is NOT a physics process — it is an algorithmic edge-smoothing
+    # pass that softens sharp thickness boundaries (and therefore the
+    # rendered topography) where the Perlin field is high, while leaving
+    # them sharp where it is low. Erosion stays in ``aging.py``.
+    #
+    # Per-cell blend: ``out = (1 − α) * thickness + α * gaussian(thickness)``.
+    # α is the Perlin field normalised into ``[alpha_min, alpha_max]``,
+    # so ``alpha_min = alpha_max = 0`` disables the pass entirely and
+    # ``alpha_min = alpha_max = 1`` is uniform full-strength smoothing.
+    # Gaussian σ in km is converted to cells via ``kernel_km / cell_km``.
+    edge_smoothing_apply_t0: bool
+    edge_smoothing_apply_tfinal: bool
+    edge_smoothing_kernel_km: float
+    edge_smoothing_alpha_min: float
+    edge_smoothing_alpha_max: float
+    edge_smoothing_noise_wavelength_km: float
+    edge_smoothing_noise_octaves: int
+    edge_smoothing_noise_persistence: float
+    # Plate-boundary boost: an EXTRA alpha contribution that decays
+    # exponentially with distance from the nearest plate boundary.
+    # ``α = clip(α_perlin + peak * exp(-d_km / falloff_km), 0, 1)``.
+    # ``peak = 0`` reduces to the pure Perlin pass; ``peak = 1`` slams
+    # alpha to its ceiling exactly at every plate suture.
+    edge_smoothing_boundary_boost_peak: float
+    edge_smoothing_boundary_falloff_km: float

@@ -62,23 +62,37 @@ def _rift_plate(
         + float(rng.uniform(-sim_config.init_angular_velocity_max_rad_per_myr,
                             sim_config.init_angular_velocity_max_rad_per_myr) * 0.5)
     )
+    child_mask_arr = new_mask
+    child_crust_arr = np.where(new_mask, parent.crust, np.int8(0)).astype(np.int8)
+    child_age_arr = np.where(new_mask, parent.age, 0.0)
+    child_thick_arr = np.where(new_mask, parent.thickness, 0.0)
     new_plate = PolygonPlate(
         pid=new_pid,
         velocity_kmpy=np.array([
             parent.velocity_kmpy[0] - divergence_kmpy * nx,
             parent.velocity_kmpy[1] - divergence_kmpy * ny,
         ], dtype=np.float64),
-        accum=np.zeros(2, dtype=np.float64),
-        cell_mask=new_mask,
-        crust=np.where(new_mask, parent.crust, np.int8(0)).astype(np.int8),
-        age=np.where(new_mask, parent.age, 0.0),
-        thickness=np.where(new_mask, parent.thickness, 0.0),
-        polygon=None,  # rebuilt right after.
-        alive=True,
-        angular_velocity_rad_per_myr=child_omega)
+        angular_velocity_rad_per_myr=child_omega,
+        # The child inherits the parent's current world-frame pose: its
+        # body frame is the parent's body frame at this instant (we're
+        # snapshotting world arrays as body arrays). Future ticks
+        # advance the child's pose independently.
+        position_km=parent.position_km.copy(),
+        orientation_rad=float(parent.orientation_rad),
+        body_mask=child_mask_arr.copy(),
+        body_crust=child_crust_arr.copy(),
+        body_age=child_age_arr.copy(),
+        body_thickness=child_thick_arr.copy(),
+        cell_mask=child_mask_arr,
+        crust=child_crust_arr,
+        age=child_age_arr,
+        thickness=child_thick_arr,
+        polygon=None,
+        alive=True)
     plates.append(new_plate)
 
-    # Mutate parent in place.
+    # Mutate parent in place — world view first, body will catch up at
+    # the next derasterise.
     parent.cell_mask = parent_mask
     parent.crust = np.where(parent_mask, parent.crust, np.int8(0)).astype(np.int8)
     parent.age = np.where(parent_mask, parent.age, 0.0)
