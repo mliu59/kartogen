@@ -252,6 +252,29 @@ def simulate_rigid_polygon(
         if tick % 10 == 0:
             alive = sum(1 for p in plates if p.alive)
             timeline.append((tick, alive))
+            # Diagnostic: per-tick state snapshot of the largest plates.
+            # Flags any plate whose mass dropped by >25 % since the
+            # previous tick — easy way to spot mid-sim decimation events.
+            if not hasattr(simulate_rigid_polygon, "_last_masses"):
+                simulate_rigid_polygon._last_masses = {}  # type: ignore[attr-defined]
+            last_masses = simulate_rigid_polygon._last_masses  # type: ignore[attr-defined]
+            cur = {}
+            for p in plates:
+                if not p.alive:
+                    continue
+                m = int(p.cell_mask.sum())
+                cur[p.pid] = m
+                prev = last_masses.get(p.pid)
+                if prev is not None and prev > 200 and m < 0.75 * prev:
+                    print(
+                        f"  [tick {tick:3d}] DECIMATION: plate {p.pid} "
+                        f"mass {prev} -> {m} ({m / prev:.0%}); "
+                        f"pos=({float(p.position_km[0]):+7.1f}, "
+                        f"{float(p.position_km[1]):+7.1f}) km, "
+                        f"orient={float(p.orientation_rad):+.2f} rad "
+                        f"({float(p.orientation_rad) * 57.296:+.1f}°)"
+                    )
+            simulate_rigid_polygon._last_masses = cur  # type: ignore[attr-defined]
         if capture_every > 0 and tick % capture_every == 0:
             capture(tick)
 

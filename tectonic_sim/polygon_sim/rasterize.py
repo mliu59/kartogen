@@ -42,12 +42,29 @@ from tectonic_sim.polygon_sim.types import PolygonPlate
 def _world_to_body(
     pose_position_km: np.ndarray, pose_orientation_rad: float,
     world_x: np.ndarray, world_y: np.ndarray,
+    domain: WorldRect,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Apply the plate's world→body transform: untranslate then unrotate."""
+    """Apply the plate's world→body transform: untranslate then unrotate.
+
+    **Toroidal-wrap-aware.** The raw delta ``(world − position_km)`` is
+    wrapped to the toroidal shortest path BEFORE rotation. Without this,
+    a plate near the seam whose world cells require wrap to reach it
+    (e.g. plate at +800 km looking at a world cell at −800 km on a
+    2000-km-wide torus) would compute ``dx = −1600`` instead of the
+    correct ``+400``, and the subsequent rotation would land the cell
+    in a completely wrong body location — effectively scrambling the
+    plate's content into random body cells. The post-rotation modulo
+    wrap absorbs the error only when the orientation aligns with the
+    domain axes (mult of π/2); for any other rotation the cells
+    mis-sample, which manifests as mid-sim plate decimation + fragment
+    bursts whenever a sufficiently rotated plate drifts near the seam.
+    """
     cos_a = float(np.cos(-pose_orientation_rad))
     sin_a = float(np.sin(-pose_orientation_rad))
     dx = world_x - float(pose_position_km[0])
     dy = world_y - float(pose_position_km[1])
+    # Toroidal shortest path on the (centred) torus.
+    dx, dy = domain.wrapped_delta_xy(dx, dy)
     bx = cos_a * dx - sin_a * dy
     by = sin_a * dx + cos_a * dy
     return bx, by
@@ -82,7 +99,7 @@ def rasterise(
             continue
 
         bx, by = _world_to_body(
-            p.position_km, p.orientation_rad, world_kx, world_ky,
+            p.position_km, p.orientation_rad, world_kx, world_ky, domain,
         )
         bx = (bx + half_w) % domain.width_km - half_w
         by = (by + half_h) % domain.height_km - half_h
@@ -184,7 +201,7 @@ def derasterise(
             wk_x = (xs + 0.5) * cell_km - half_w
             wk_y = (ys + 0.5) * cell_km - half_h
             bx_w, by_w = _world_to_body(
-                p.position_km, p.orientation_rad, wk_x, wk_y,
+                p.position_km, p.orientation_rad, wk_x, wk_y, domain,
             )
             bx_w = (bx_w + half_w) % domain.width_km - half_w
             by_w = (by_w + half_h) % domain.height_km - half_h
@@ -201,7 +218,7 @@ def derasterise(
             wk_x = (xs + 0.5) * cell_km - half_w
             wk_y = (ys + 0.5) * cell_km - half_h
             bx_c, by_c = _world_to_body(
-                p.position_km, p.orientation_rad, wk_x, wk_y,
+                p.position_km, p.orientation_rad, wk_x, wk_y, domain,
             )
             bx_c = (bx_c + half_w) % domain.width_km - half_w
             by_c = (by_c + half_h) % domain.height_km - half_h

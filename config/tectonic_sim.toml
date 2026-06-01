@@ -155,7 +155,7 @@ plate_area_per_plate_km2 = 0.0
 #          +init_angular_velocity_max_rad_per_myr).
 # 0 disables rotation. 0.01 rad/Myr ≈ 0.57° / Myr — geologically modest;
 # a plate makes one full rotation in ~600 Myr.
-init_angular_velocity_max_rad_per_myr = 0.01
+init_angular_velocity_max_rad_per_myr = 0.005
 # Per-tick angular damping multiplier on top of velocity_damping_strength.
 # Higher = jammed plates lose spin faster than translation.
 angular_damping_multiplier = 5.0
@@ -202,7 +202,12 @@ accretion_inland_offset_max_km = 41.0
 # Per-tick probability of a rift event. When fires, picks the largest
 # eligible plate (>= rift_min_plate_particles) and splits it into two
 # halves with diverging velocities. 0 disables rifting entirely.
-rift_prob_per_tick = 0.02
+# DISABLED for now while the continuous-pose architecture beds in —
+# rift splits interact awkwardly with the body-frame state in the
+# new architecture (the child plate inherits a fresh body but no
+# cumulative history of mutations on the parent). Re-enable once the
+# body-frame split is implemented properly.
+rift_prob_per_tick = 0.0
 rift_min_plate_cells = 200
 # Each half gets +/-(rift_divergence_ratio × motion_speed_kmpy) along
 # the rift normal. 0.5 = the two halves pull apart at the speed cap;
