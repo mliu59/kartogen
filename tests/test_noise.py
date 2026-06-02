@@ -6,7 +6,7 @@ import random
 
 import numpy as np
 import pytest
-from tectonic_sim.noise import PerlinNoise2D, fbm, fbm_grid, ridged_fbm
+from tectonic_sim.noise import PerlinNoise2D, fbm, fbm_grid_tileable, ridged_fbm
 
 
 @pytest.fixture
@@ -129,26 +129,48 @@ def test_sample_grid_2d_shape(noise: PerlinNoise2D) -> None:
     assert out.dtype == np.float64
 
 
-def test_fbm_grid_matches_scalar(noise: PerlinNoise2D) -> None:
-    """fbm_grid result equals scalar fbm at the same points."""
-    rng = random.Random(9)
-    xs = np.array([rng.uniform(-50, 50) for _ in range(30)], dtype=np.float64)
-    ys = np.array([rng.uniform(-50, 50) for _ in range(30)], dtype=np.float64)
-    grid = fbm_grid(noise, xs, ys, octaves=4, base_frequency=0.05)
-    for i, (x, y) in enumerate(zip(xs, ys)):
-        scalar = fbm(noise, float(x), float(y), octaves=4, base_frequency=0.05)
-        assert abs(float(grid[i]) - scalar) < 1e-12
-
-
-def test_fbm_grid_bounded() -> None:
-    """fbm_grid output stays in approximately [-1, 1] across many octaves."""
+def test_fbm_grid_tileable_bounded() -> None:
+    """fbm_grid_tileable output stays in approximately [-1, 1]."""
     n = PerlinNoise2D.from_rng(random.Random(11))
-    rng = np.random.default_rng(11)
-    xs = rng.uniform(-100, 100, 2000)
-    ys = rng.uniform(-100, 100, 2000)
-    out = fbm_grid(n, xs, ys, octaves=6, base_frequency=0.05)
+    width = height = 1000.0
+    xs = np.linspace(-width / 2, width / 2, 64, endpoint=False)
+    ys = np.linspace(-height / 2, height / 2, 64, endpoint=False)
+    gx, gy = np.meshgrid(xs, ys)
+    out = fbm_grid_tileable(
+        n, gx, gy, width=width, height=height, octaves=6, base_frequency=1.0 / 200.0)
     assert out.max() <= 1.01
     assert out.min() >= -1.01
+
+
+def test_fbm_grid_tileable_wraps_at_seam() -> None:
+    """The whole point of the tileable variant: opposite edges of the domain
+    carry the same value, so a field straddling the torus seam has no
+    discontinuity. The left column (x = -width/2) must equal the wrapped
+    right edge (x = +width/2), and likewise top/bottom."""
+    n = PerlinNoise2D.from_rng(random.Random(13))
+    width = height = 1200.0
+    # Sample on a grid that includes both the left edge (-half) and exactly
+    # +half (one period later); those two columns must match cell-for-cell.
+    cols = 48
+    xs = -width / 2 + np.arange(cols + 1) * (width / cols)  # last entry == +half
+    ys = np.linspace(-height / 2, height / 2, 37, endpoint=False)
+    gx, gy = np.meshgrid(xs, ys)
+    out = fbm_grid_tileable(
+        n, gx, gy, width=width, height=height, octaves=5, base_frequency=1.0 / 300.0)
+    # Column 0 (x = -half) and column `cols` (x = +half) are one full period
+    # apart → identical.
+    np.testing.assert_allclose(out[:, 0], out[:, cols], atol=1e-9)
+
+
+def test_fbm_grid_tileable_rejects_non_integer_lacunarity(noise: PerlinNoise2D) -> None:
+    """Per-octave periods must stay integral, so a non-integer lacunarity
+    is a hard error rather than a silent seam reintroduction."""
+    xs = np.linspace(-100.0, 100.0, 8)
+    gx, gy = np.meshgrid(xs, xs)
+    with pytest.raises(ValueError, match="integer lacunarity"):
+        fbm_grid_tileable(
+            noise, gx, gy, width=200.0, height=200.0,
+            octaves=3, lacunarity=2.5, base_frequency=0.05)
 
 
 def test_perlin_from_numpy_generator() -> None:

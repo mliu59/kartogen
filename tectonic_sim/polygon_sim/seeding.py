@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.ndimage import gaussian_filter
 
-from tectonic_sim.noise import PerlinNoise2D, fbm_grid
+from tectonic_sim.noise import PerlinNoise2D, fbm_grid_tileable
 from tectonic_sim.rng import RngStream
 from tectonic_sim.types import CRUST_CONTINENTAL, WorldRect, crust_type_code
 
@@ -257,8 +257,12 @@ def _initial_state(
         relief_noise = PerlinNoise2D.from_rng(relief_rng)
         x_km_grid = cell_xy[:, 0].reshape(gy, gx)
         y_km_grid = cell_xy[:, 1].reshape(gy, gx)
-        relief = fbm_grid(
+        # Tileable so a continent straddling the torus seam carries no
+        # thickness discontinuity. The wrap period is the cell grid's km
+        # extent (gx/gy cells × cell_km), which is exactly what wraps.
+        relief = fbm_grid_tileable(
             relief_noise, x_km_grid, y_km_grid,
+            width=gx * cell_km, height=gy * cell_km,
             octaves=sim_config.continental_relief_octaves,
             persistence=sim_config.continental_relief_persistence,
             base_frequency=1.0 / sim_config.continental_relief_wavelength_km)

@@ -40,7 +40,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.ndimage import distance_transform_edt, gaussian_filter
 
-from tectonic_sim.noise import PerlinNoise2D, fbm_grid
+from tectonic_sim.noise import PerlinNoise2D, fbm_grid_tileable
 from tectonic_sim.types import SimConfig, WorldRect
 
 
@@ -58,16 +58,17 @@ def _build_alpha_field(
     alpha_min = float(sim_config.edge_smoothing_alpha_min)
     alpha_max = float(sim_config.edge_smoothing_alpha_max)
 
-    # Cell-centre coordinates in km in the sim's centred frame.
-    half_w = domain.half_width_km
-    half_h = domain.half_height_km
-    xs = (np.arange(gx) + 0.5) * cell_km - half_w
-    ys = (np.arange(gy) + 0.5) * cell_km - half_h
+    # Cell-centre coordinates in km in the sim's centred frame. The wrap
+    # period is the cell grid's km extent (gx/gy cells × cell_km), centred
+    # at 0, so the alpha field tiles seamlessly across the torus seam.
+    xs = (np.arange(gx) + 0.5) * cell_km - 0.5 * gx * cell_km
+    ys = (np.arange(gy) + 0.5) * cell_km - 0.5 * gy * cell_km
     x_grid, y_grid = np.meshgrid(xs, ys, indexing="xy")
 
     noise = PerlinNoise2D.from_rng(np.random.Generator(np.random.PCG64(rng_seed)))
-    raw = fbm_grid(
+    raw = fbm_grid_tileable(
         noise, x_grid, y_grid,
+        width=gx * cell_km, height=gy * cell_km,
         octaves=int(sim_config.edge_smoothing_noise_octaves),
         persistence=float(sim_config.edge_smoothing_noise_persistence),
         base_frequency=1.0 / float(sim_config.edge_smoothing_noise_wavelength_km),

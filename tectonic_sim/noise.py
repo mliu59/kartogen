@@ -6,8 +6,11 @@ No global state. Used for:
 
   * scalar ``sample`` + ``fbm`` / ``ridged_fbm`` — per-hex elevation
     detail in ``worldgen.elevation``;
-  * vectorized ``sample_grid`` + ``fbm_grid`` — full-grid stamping in
-    ``tectonic_sim.polygon_sim.seeding`` (continental relief at sim t=0).
+  * vectorized ``sample_grid`` + ``fbm_grid_tileable`` — full-grid
+    stamping on the sim torus (continental relief in
+    ``tectonic_sim.polygon_sim.seeding``; the edge-smoothing alpha field
+    in ``tectonic_sim.polygon_sim.edge_smoothing``). The tileable variant
+    wraps seamlessly across the torus seam.
 
 Both paths share the same permutation table and gradient lookup, so a
 PerlinNoise2D built from a given seed produces identical values whether
@@ -132,6 +135,44 @@ class PerlinNoise2D:
         nx1 = n01 + u * (n11 - n01)
         return nx0 + v * (nx1 - nx0)
 
+    def sample_grid_periodic(
+        self, x: np.ndarray, y: np.ndarray, period_x: int, period_y: int,
+    ) -> np.ndarray:
+        """Sample on a lattice that wraps every ``period_x`` cells in x and
+        ``period_y`` cells in y, so the field tiles seamlessly: the value at
+        lattice coordinate ``c`` equals the value at ``c + period`` on each
+        axis.
+
+        Identical to ``sample_grid`` except the integer lattice indices are
+        reduced modulo the per-axis period before the gradient-hash lookup —
+        this makes opposite edges of the period read the same gradients, so a
+        domain spanning exactly one period has no seam. ``period_x`` /
+        ``period_y`` must be positive integers.
+        """
+        perm = np.asarray(self.perm, dtype=np.int64)
+        x0 = np.floor(x).astype(np.int64)
+        y0 = np.floor(y).astype(np.int64)
+        xf = (x - x0).astype(np.float64)
+        yf = (y - y0).astype(np.float64)
+        u = _fade_np(xf)
+        v = _fade_np(yf)
+
+        def _grad_arr(ix: np.ndarray, iy: np.ndarray,
+                      dx: np.ndarray, dy: np.ndarray) -> np.ndarray:
+            ixw = np.mod(ix, period_x)
+            iyw = np.mod(iy, period_y)
+            h = perm[(ixw + perm[iyw & 255]) & 255] & 7
+            return _GRADS_2D_NP[h, 0] * dx + _GRADS_2D_NP[h, 1] * dy
+
+        n00 = _grad_arr(x0,     y0,     xf,         yf)
+        n10 = _grad_arr(x0 + 1, y0,     xf - 1.0,   yf)
+        n01 = _grad_arr(x0,     y0 + 1, xf,         yf - 1.0)
+        n11 = _grad_arr(x0 + 1, y0 + 1, xf - 1.0,   yf - 1.0)
+
+        nx0 = n00 + u * (n10 - n00)
+        nx1 = n01 + u * (n11 - n01)
+        return nx0 + v * (nx1 - nx0)
+
 
 # ---------------------------------------------------------------------------
 # fBm — scalar + vectorized
@@ -163,30 +204,57 @@ def fbm(
     return total / norm if norm > 0 else 0.0
 
 
-def fbm_grid(
+def fbm_grid_tileable(
     noise: PerlinNoise2D,
     x: np.ndarray,
     y: np.ndarray,
     *,
+    width: float,
+    height: float,
     octaves: int,
     lacunarity: float = 2.0,
     persistence: float = 0.5,
     base_frequency: float = 1.0,
 ) -> np.ndarray:
-    """Vectorized fBm — see ``fbm`` for the semantic. Inputs same shape,
-    output same shape, dtype ``float64``. Output is the per-octave
-    amplitude-weighted average, so the range is approximately ``[-1, 1]``
-    independent of ``octaves``.
+    """Tileable fBm on a torus of size ``(width, height)`` in the same units
+    as ``x`` / ``y``. Output same shape, dtype ``float64``, approximately
+    ``[-1, 1]`` independent of ``octaves``.
+
+    ``x`` / ``y`` are coordinates in a frame centred on the domain
+    (``x`` in ``[-width/2, +width/2)``, likewise ``y``). The field wraps
+    seamlessly — the value at ``x = -width/2`` equals the value at
+    ``x = +width/2`` — so a continent (or alpha field) straddling the torus
+    seam shows no texture discontinuity.
+
+    Seamlessness is achieved by snapping each axis to an integer number of
+    base wavelengths across the domain (``round(width * base_frequency)``),
+    mapping the centred coordinate onto that integer lattice, and wrapping
+    the lattice index modulo the per-octave period in
+    ``sample_grid_periodic``. ``lacunarity`` must be an integer (2.0, the
+    only value used) so the per-octave period stays integral.
     """
+    lac = int(round(lacunarity))
+    if lac != lacunarity:
+        raise ValueError(
+            f"tileable fBm requires an integer lacunarity, got {lacunarity}")
+    period_x = max(1, int(round(width * base_frequency)))
+    period_y = max(1, int(round(height * base_frequency)))
+    # Map centred coords onto [0, period) lattice units at the base octave.
+    u = (x / width + 0.5) * period_x
+    v = (y / height + 0.5) * period_y
+
     total = np.zeros_like(x, dtype=np.float64)
     amplitude = 1.0
-    frequency = base_frequency
     norm = 0.0
+    px, py = period_x, period_y
     for _ in range(octaves):
-        total += amplitude * noise.sample_grid(x * frequency, y * frequency)
+        total += amplitude * noise.sample_grid_periodic(u, v, px, py)
         norm += amplitude
         amplitude *= persistence
-        frequency *= lacunarity
+        u = u * lac
+        v = v * lac
+        px *= lac
+        py *= lac
     if norm > 0.0:
         total /= norm
     return total
