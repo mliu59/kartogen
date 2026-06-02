@@ -17,6 +17,7 @@ from tectonic_sim.rng import RngStream
 from tectonic_sim.types import CRUST_CONTINENTAL, WorldRect, crust_type_code
 
 from tectonic_sim.polygon_sim.edge_smoothing import apply_edge_smoothing
+from tectonic_sim.polygon_sim.kinematics import _mask_centroid_km
 from tectonic_sim.polygon_sim.topology import _cell_centres, _grid_dims
 from tectonic_sim.polygon_sim.types import (
     PolygonPlate,
@@ -313,27 +314,62 @@ def _initial_state(
 
     # ----- Build per-plate state.
     vel_rng = np.random.Generator(np.random.PCG64(seed ^ _VELOCITY_RNG_TAG))
+    rot_rng = np.random.Generator(np.random.PCG64(seed ^ _ROT_RNG_TAG))
+    omega_max = sim_config.init_angular_velocity_max_rad_per_myr
     plates: list[PolygonPlate] = []
     for ps in plates_seed:
         mask = g_owner == ps.id
         if not mask.any():
             continue
-        speed = float(vel_rng.uniform(
-            sim_config.init_speed_min_ratio * sim_config.motion_speed_kmpy,
-            sim_config.motion_speed_kmpy))
-        angle = float(vel_rng.uniform(0.0, 2.0 * np.pi))
-        vx = speed * float(np.cos(angle))
-        vy = speed * float(np.sin(angle))
         cell_mask_init = mask.copy()
         crust_init = np.where(mask, g_crust, 0).astype(np.int8)
         age_init = np.zeros((gy, gx), dtype=np.float64)
         thick_init = np.where(mask, g_thick, 0.0).astype(np.float64)
+        # Anchor the pose + rotation pivot on the plate's centroid so it
+        # spins about its own centre of area (not a distant fixed origin)
+        # and the world→body wrap discontinuity sits at the centroid's
+        # antipode, far outside the plate. body == world at t=0 because
+        # position_km == body_pivot_km == centroid (world = R(0)·(body −
+        # centroid) + centroid = body).
+        centroid = _mask_centroid_km(mask, domain, gy, gx, cell_km)
+        cx, cy = (0.0, 0.0) if centroid is None else centroid
+
+        # --- Euler-pole motion (physically-coherent v + ω) ---
+        # Real plate motion is rotation about an Euler pole, generally
+        # OFF the plate. We draw a rotation rate ω and a target bulk
+        # speed (using the existing knobs), then place the pole at the
+        # distance/bearing that yields that speed: pole = centroid −
+        # d·(cos β, sin β) with d = speed / |ω|. The centroid's velocity
+        # is then v = ω ẑ × (centroid − pole), which is tangent to the
+        # arc about the pole and has magnitude exactly ``speed``. This
+        # couples the plate's drift and spin to a single pole instead of
+        # drawing them independently. (The pole is a free vector here —
+        # we only use the centroid→pole displacement, so no torus wrap.)
+        omega = float(rot_rng.uniform(-omega_max, omega_max))
+        speed = float(vel_rng.uniform(
+            sim_config.init_speed_min_ratio * sim_config.motion_speed_kmpy,
+            sim_config.motion_speed_kmpy))
+        bearing = float(vel_rng.uniform(0.0, 2.0 * np.pi))
+        if abs(omega) > 1e-9:
+            d = speed / abs(omega)
+            # centroid − pole = d·(cos β, sin β); v = ω ẑ × (that).
+            rx = d * float(np.cos(bearing))
+            ry = d * float(np.sin(bearing))
+            vx = -omega * ry
+            vy = omega * rx
+        else:
+            # ω ≈ 0 → pole at infinity → pure translation along bearing.
+            vx = speed * float(np.cos(bearing))
+            vy = speed * float(np.sin(bearing))
         plate = PolygonPlate(
             pid=int(ps.id),
             velocity_kmpy=np.array([vx, vy], dtype=np.float64),
-            # Continuous pose: starts at identity (body == world at t=0).
-            position_km=np.zeros(2, dtype=np.float64),
+            angular_velocity_rad_per_myr=omega,
+            # Continuous pose: pivot/position anchored at the centroid.
+            position_km=np.array([cx, cy], dtype=np.float64),
+            position_carry_km=np.zeros(2, dtype=np.float64),
             orientation_rad=0.0,
+            body_pivot_km=np.array([cx, cy], dtype=np.float64),
             # Body-frame canonical state — populated from the
             # Voronoi-derived per-cell arrays.
             body_mask=cell_mask_init.copy(),
@@ -356,10 +392,8 @@ def _initial_state(
         plate._world_baseline_thickness = thick_init.copy()
         plates.append(plate)
 
-    # Per-plate random angular velocity (deterministic via seed XOR).
-    rot_rng = np.random.Generator(np.random.PCG64(seed ^ _ROT_RNG_TAG))
-    for p in plates:
-        p.angular_velocity_rad_per_myr = float(rot_rng.uniform(
-            -sim_config.init_angular_velocity_max_rad_per_myr, sim_config.init_angular_velocity_max_rad_per_myr))
+    # Angular velocity is now drawn per-plate inside the loop above as
+    # part of the Euler-pole motion (coupled to each plate's velocity),
+    # so there is no separate post-pass.
     return plates, cell_km, t0_snapshot
 

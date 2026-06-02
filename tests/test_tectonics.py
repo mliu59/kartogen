@@ -7,7 +7,6 @@ from dataclasses import replace
 from typing import cast
 
 import pytest
-
 from worldgen import generate
 from worldgen.plates import (
     PLATE_TYPE_CONTINENTAL,
@@ -18,8 +17,7 @@ from worldgen.tectonics import (
     LithosphereState,
     column_to_elevation_km,
 )
-from worldgen.types import TectonicsConfig, WorldShape, WorldgenConfig
-
+from worldgen.types import TectonicsConfig, WorldgenConfig, WorldShape
 
 # ---------------------------------------------------------------------------
 # Closed-form elevation map (``column_to_elevation_km``) — exercised against
@@ -28,6 +26,7 @@ from worldgen.types import TectonicsConfig, WorldShape, WorldgenConfig
 # ---------------------------------------------------------------------------
 
 
+pytestmark = pytest.mark.slow  # full generate()/sim per test
 def _tectonics(default_worldgen_config: WorldgenConfig) -> TectonicsConfig:
     return cast(TectonicsConfig, default_worldgen_config.tectonics)
 

@@ -5,12 +5,13 @@ from __future__ import annotations
 import math
 from dataclasses import replace
 
+import pytest
 from worldgen import generate
 from worldgen.hex import Hex
 from worldgen.ocean import _current_direction_at
-from worldgen.types import WorldShape, WorldgenConfig
+from worldgen.types import WorldgenConfig, WorldShape
 
-
+pytestmark = pytest.mark.slow  # full generate()/sim per test
 def test_ocean_layer_runs_and_is_deterministic(
     default_worldgen_config: WorldgenConfig,
 ) -> None:

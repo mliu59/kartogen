@@ -37,21 +37,19 @@ _REQUIRED_KEYS: tuple[str, ...] = (
     "continental_reference_thickness_km",
     "continental_isostasy_factor",
     "sea_level_km",
-    # overlap_radius_km is *not* required — it's derived from
-    # particle_spacing_km via SimConfig.overlap_radius_km.
-    "orogeny_uplift_per_overlap_km",
     "folding_ratio",
-    "folding_displacement_km",
-    "subduction_arc_uplift_km",
     "folding_belt_depth_km",
-    "folding_belt_decay_km",
+    "folding_belt_ramp_km",
+    "folding_belt_taper_km",
     "folding_loser_side_ratio",
     "folding_belt_loser_depth_km",
     "folding_belt_loser_decay_km",
     "velocity_damping_strength",
+    "cc_velocity_damping_multiplier",
     "erosion_period",
     "erosion_strength",
     "snapshot_period_ticks",
+    "recenter_period_ticks",
     # --- New features ported from rigid-polygon prototype (P1 of the port).
     "init_speed_min_ratio",
     "plate_area_per_plate_km2",
@@ -61,6 +59,7 @@ _REQUIRED_KEYS: tuple[str, ...] = (
     "momentum_contact_boost",
     "fusion_overlap_threshold",
     "fusion_both_continental_only",
+    "fusion_max_relative_velocity_kmpy",
     "accretion_prob_per_boundary_per_tick",
     "accretion_cells_per_event",
     "accretion_inland_offset_min_km",
@@ -80,11 +79,12 @@ _REQUIRED_KEYS: tuple[str, ...] = (
     "translation_speed_ratio",
     "fragment_spawn_threshold",
     "alpha_factor",
-    "init_alpha_factor",
     "crust_continental_weight",
     "buoyancy_bonus_frac",
     "max_buoyancy_age_myr",
     "min_continental_thickness_km",
+    "divergent_fill_continental_threshold",
+    "divergent_fill_basin_depth_km",
     "voronoi_warp_amplitude_km",
     "voronoi_warp_sigma_cells",
     "voronoi_warp_jaggedness",
@@ -151,21 +151,21 @@ def load_sim_config(table: dict[str, object]) -> SimConfig:
         ),
         continental_isostasy_factor=float(table["continental_isostasy_factor"]),  # type: ignore[arg-type]
         sea_level_km=float(table["sea_level_km"]),  # type: ignore[arg-type]
-        orogeny_uplift_per_overlap_km=float(
-            table["orogeny_uplift_per_overlap_km"]  # type: ignore[arg-type]
-        ),
         folding_ratio=float(table["folding_ratio"]),  # type: ignore[arg-type]
-        folding_displacement_km=float(table["folding_displacement_km"]),  # type: ignore[arg-type]
-        subduction_arc_uplift_km=float(table["subduction_arc_uplift_km"]),  # type: ignore[arg-type]
         folding_belt_depth_km=float(table["folding_belt_depth_km"]),  # type: ignore[arg-type]
-        folding_belt_decay_km=float(table["folding_belt_decay_km"]),  # type: ignore[arg-type]
+        folding_belt_ramp_km=float(table["folding_belt_ramp_km"]),  # type: ignore[arg-type]
+        folding_belt_taper_km=float(table["folding_belt_taper_km"]),  # type: ignore[arg-type]
         folding_loser_side_ratio=float(table["folding_loser_side_ratio"]),  # type: ignore[arg-type]
         folding_belt_loser_depth_km=float(table["folding_belt_loser_depth_km"]),  # type: ignore[arg-type]
         folding_belt_loser_decay_km=float(table["folding_belt_loser_decay_km"]),  # type: ignore[arg-type]
         velocity_damping_strength=float(table["velocity_damping_strength"]),  # type: ignore[arg-type]
+        cc_velocity_damping_multiplier=float(
+            table["cc_velocity_damping_multiplier"]  # type: ignore[arg-type]
+        ),
         erosion_period=int(table["erosion_period"]),  # type: ignore[arg-type]
         erosion_strength=float(table["erosion_strength"]),  # type: ignore[arg-type]
         snapshot_period_ticks=int(table["snapshot_period_ticks"]),  # type: ignore[arg-type]
+        recenter_period_ticks=int(table["recenter_period_ticks"]),  # type: ignore[arg-type]
         # --- Ported features (P1). Wiring lands in P2.
         init_speed_min_ratio=float(table["init_speed_min_ratio"]),  # type: ignore[arg-type]
         plate_area_per_plate_km2=float(
@@ -184,6 +184,9 @@ def load_sim_config(table: dict[str, object]) -> SimConfig:
         ),
         fusion_both_continental_only=bool(
             table["fusion_both_continental_only"]  # type: ignore[arg-type]
+        ),
+        fusion_max_relative_velocity_kmpy=float(
+            table["fusion_max_relative_velocity_kmpy"]  # type: ignore[arg-type]
         ),
         accretion_prob_per_boundary_per_tick=float(
             table["accretion_prob_per_boundary_per_tick"]  # type: ignore[arg-type]
@@ -234,7 +237,6 @@ def load_sim_config(table: dict[str, object]) -> SimConfig:
             table["fragment_spawn_threshold"]  # type: ignore[arg-type]
         ),
         alpha_factor=float(table["alpha_factor"]),  # type: ignore[arg-type]
-        init_alpha_factor=float(table["init_alpha_factor"]),  # type: ignore[arg-type]
         crust_continental_weight=float(
             table["crust_continental_weight"]  # type: ignore[arg-type]
         ),
@@ -244,6 +246,12 @@ def load_sim_config(table: dict[str, object]) -> SimConfig:
         ),
         min_continental_thickness_km=float(
             table["min_continental_thickness_km"]  # type: ignore[arg-type]
+        ),
+        divergent_fill_continental_threshold=float(
+            table["divergent_fill_continental_threshold"]  # type: ignore[arg-type]
+        ),
+        divergent_fill_basin_depth_km=float(
+            table["divergent_fill_basin_depth_km"]  # type: ignore[arg-type]
         ),
         voronoi_warp_amplitude_km=float(
             table["voronoi_warp_amplitude_km"]  # type: ignore[arg-type]

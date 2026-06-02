@@ -287,12 +287,6 @@ def _build_partition_image(owner, caption, *, cell_km, upscale=6,
     return img
 
 
-def _render_partition(owner, out_path, caption, *, cell_km, upscale=6):
-    _build_partition_image(
-        owner, caption, cell_km=cell_km, upscale=upscale,
-    ).save(out_path)
-
-
 def _build_crust_image(owner, crust, age, thick, max_age, caption,
                        *, cell_km, upscale=6):
     """Construct a crust view as a PIL Image (no save)."""
@@ -339,12 +333,71 @@ def _build_crust_image(owner, crust, age, thick, max_age, caption,
     return img
 
 
-def _render_crust(owner, crust, age, thick, max_age, out_path, caption,
-                  *, cell_km, upscale=6):
-    _build_crust_image(
-        owner, crust, age, thick, max_age, caption,
-        cell_km=cell_km, upscale=upscale,
-    ).save(out_path)
+def _overlay_colorbar(
+    img, stops_v, stops_rgb, title, *, upscale: int = 6,
+) -> None:
+    """Draw a vertical colour-scale legend on the right edge of ``img``.
+
+    ``stops_v`` / ``stops_rgb`` are the same piecewise-linear colormap
+    stops the image was painted with (values + RGB); the bar interpolates
+    them so the legend matches the map exactly. A dark backing panel
+    keeps the bar + labels legible over any underlying colour. ``title``
+    is drawn above the bar (units), and each stop value gets a tick +
+    label. Drawn AFTER the km axes so it sits on top.
+    """
+    from PIL import ImageDraw, ImageFont
+
+    stops_v = np.asarray(stops_v, dtype=np.float64)
+    stops_rgb = np.asarray(stops_rgb, dtype=np.float64)
+    vmin, vmax = float(stops_v[0]), float(stops_v[-1])
+
+    W, H = img.size
+    draw = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.truetype("arial.ttf", size=max(10, upscale * 2))
+    except OSError:
+        font = ImageFont.load_default()
+
+    bar_w = max(10, upscale * 2)
+    bar_h = int(H * 0.5)
+    tick = max(3, upscale // 2)
+    label_w = max(48, upscale * 9)
+    margin = max(8, upscale)
+    x1 = W - margin - label_w
+    x0 = x1 - bar_w
+    y0 = (H - bar_h) // 2
+    y1 = y0 + bar_h
+    pad = max(4, upscale)
+
+    # Dark backing panel (bar + title + labels) for contrast.
+    draw.rectangle(
+        [x0 - pad, y0 - 3 * upscale - pad, x1 + label_w, y1 + pad],
+        fill=(18, 18, 26),
+    )
+
+    def _interp(v: float) -> tuple[int, int, int]:
+        v = min(max(v, vmin), vmax)
+        k = int(np.searchsorted(stops_v, v, side="right") - 1)
+        k = min(max(k, 0), len(stops_v) - 2)
+        f = (v - stops_v[k]) / max(stops_v[k + 1] - stops_v[k], 1e-9)
+        c = stops_rgb[k] + (stops_rgb[k + 1] - stops_rgb[k]) * f
+        return (int(c[0]), int(c[1]), int(c[2]))
+
+    span = max(y1 - 1 - y0, 1)
+    for py in range(y0, y1):
+        f = (py - y0) / span                 # 0 at top, 1 at bottom
+        draw.line([(x0, py), (x1, py)], fill=_interp(vmax + (vmin - vmax) * f))
+    draw.rectangle([x0, y0, x1, y1], outline=(235, 235, 235))
+
+    draw.text((x0, y0 - 3 * upscale), title, fill=(240, 240, 240), font=font)
+    vrange = max(vmax - vmin, 1e-9)
+    for sv in stops_v:
+        py = int(round(y0 + (vmax - float(sv)) / vrange * span))
+        draw.line([(x1, py), (x1 + tick, py)], fill=(235, 235, 235))
+        draw.text(
+            (x1 + tick + 3, py - upscale),
+            f"{float(sv):g}", fill=(235, 235, 235), font=font,
+        )
 
 
 # 8-stop topography colormap (km elevation → RGB).
@@ -404,16 +457,11 @@ def _build_topography_image(
         sim_width_km=gx * cell_km, sim_height_km=gy * cell_km,
         upscale=upscale,
     )
+    _overlay_colorbar(
+        img, _TOPO_STOPS[:, 0], _TOPO_STOPS[:, 1:4],
+        "elev (km)", upscale=upscale,
+    )
     return img
-
-
-def _render_topography(
-    owner, crust, age, thick, sim_config, out_path, caption,
-    *, cell_km, upscale=6):
-    _build_topography_image(
-        owner, crust, age, thick, sim_config, caption,
-        cell_km=cell_km, upscale=upscale,
-    ).save(out_path)
 
 
 # 5-stop colormap for crust thickness. Stops correspond to:
@@ -473,6 +521,10 @@ def _build_thickness_image(owner, thickness, caption, *, cell_km, upscale=6):
         img,
         sim_width_km=gx * cell_km, sim_height_km=gy * cell_km,
         upscale=upscale,
+    )
+    _overlay_colorbar(
+        img, _THICKNESS_STOPS_KM, _THICKNESS_STOPS_RGB,
+        "crust (km)", upscale=upscale,
     )
     return img
 

@@ -22,7 +22,6 @@ from tectonic_sim import (
     save_state,
 )
 from tectonic_sim.transect import (
-    TransectResult,
     render_transect,
     sample_transect,
 )

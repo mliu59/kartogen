@@ -12,7 +12,6 @@ import dataclasses
 from pathlib import Path
 
 import pytest
-
 from worldgen import generate
 from worldgen.config_loader import load_worldgen_config
 from worldgen.pipeline import GeneratedWorld

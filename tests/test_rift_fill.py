@@ -12,10 +12,11 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
 from worldgen import generate
-from worldgen.types import WorldShape, WorldgenConfig
+from worldgen.types import WorldgenConfig, WorldShape
 
-
+pytestmark = pytest.mark.slow  # full generate()/sim per test
 def test_rift_thickness_produces_below_sea_level_continental(
     default_worldgen_config: WorldgenConfig,
 ) -> None:

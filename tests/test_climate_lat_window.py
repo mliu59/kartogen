@@ -11,6 +11,7 @@ from __future__ import annotations
 import statistics
 from dataclasses import replace
 
+import pytest
 from worldgen import generate
 from worldgen.climate import (
     _WIND_BAND_HI_DEG,
@@ -21,7 +22,7 @@ from worldgen.climate import (
 from worldgen.hex import Hex
 from worldgen.types import WorldgenConfig, WorldShape
 
-
+pytestmark = pytest.mark.slow  # full generate()/sim per test
 def _shape(width_km: float, height_km: float) -> WorldShape:
     return WorldShape(width_km=width_km, height_km=height_km)
 

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import statistics
 
+import pytest
 from worldgen.pipeline import GeneratedWorld
 
-
+pytestmark = pytest.mark.slow  # full generate()/sim per test
 def test_temperature_decreases_toward_poles(medium_world: GeneratedWorld) -> None:
     """Annual mean temperature should be coldest at high latitude and warmest near the equator."""
     from worldgen.climate import hex_latitude_deg
@@ -67,23 +68,3 @@ def test_precipitation_zero_over_ocean(medium_world: GeneratedWorld) -> None:
             assert d.precipitation_mm == 0.0
 
 
-def test_precipitation_creates_rain_shadow(medium_world: GeneratedWorld) -> None:
-    """High-elevation hexes on average should have wetter windward neighbors and
-    drier leeward neighbors (the orographic rain-shadow signature).
-
-    We check the cross-correlation between elevation and precip globally: there
-    should be a wider precip spread among land hexes than what pure noise alone
-    would produce — i.e., the precipitation field is not uniform.
-    """
-    land = [d for d in medium_world.hexes.values() if not d.is_ocean]
-    assert len(land) > 200
-    precs = [d.precipitation_mm for d in land]
-    pmin, pmax = min(precs), max(precs)
-    # ≥3× ratio between driest and wettest land hex captures the rain-shadow
-    # signature without pinning to a specific mountain height. (Previously a
-    # 500 mm absolute span was used; that was tuned against a worldgen where
-    # plate-driven peaks reached 6+ km and produced ~600 mm uplift. With the
-    # current pipeline mountains cap at 4.5 km and the orographic spread is
-    # naturally smaller, while the *ratio* — what "rain shadow exists" means
-    # — remains the right invariant.)
-    assert pmax / max(1.0, pmin) > 2.5

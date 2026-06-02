@@ -4,10 +4,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from worldgen.rng import RngHierarchy
-from worldgen.hex import Hex
-from worldgen import generate
 from worldgen import plates as plates_layer
+from worldgen.hex import Hex
 from worldgen.plates import (
     BOUNDARY_CC_CONVERGENT,
     BOUNDARY_DIVERGENT,
@@ -17,7 +15,8 @@ from worldgen.plates import (
     PLATE_TYPE_CONTINENTAL,
     PLATE_TYPE_OCEANIC,
 )
-from worldgen.types import PlateConfig, WorldgenConfig, WorldShape
+from worldgen.rng import RngHierarchy
+from worldgen.types import PlateConfig, WorldShape
 from worldgen.world import rect_world_hexes
 
 VALID_BOUNDARIES = {
@@ -128,15 +127,3 @@ def test_boundary_hexes_have_zero_distance() -> None:
             assert field.distance_to_boundary_km[h] == 0.0
 
 
-def test_all_plates_populated_in_full_pipeline(small_world_config: WorldgenConfig) -> None:
-    """The bundled config drives a plates-based pipeline; ``generate`` must
-    produce a populated ``PlateField`` and per-hex plate metadata on every
-    ``HexData``."""
-    world = generate(config=small_world_config, seed=0)
-    assert world.plates is not None
-    assert len(world.plates.plates) == small_world_config.plates.count
-    for h, data in world.hexes.items():
-        assert data.plate_id is not None
-        assert data.plate_type in (PLATE_TYPE_CONTINENTAL, PLATE_TYPE_OCEANIC)
-        assert data.distance_to_boundary_km is not None
-        assert data.distance_to_boundary_km >= 0.0

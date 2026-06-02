@@ -5,14 +5,13 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
-
-from worldgen import generate
-from worldgen.terrain import TERRAIN_NAMES
 from worldgen import biome as biome_layer
+from worldgen import generate
 from worldgen.pipeline import GeneratedWorld
+from worldgen.terrain import TERRAIN_NAMES
 from worldgen.types import WorldgenConfig
 
-
+pytestmark = pytest.mark.slow  # full generate()/sim per test
 def test_every_biome_name_is_known(small_world: GeneratedWorld) -> None:
     """Every assigned biome must appear in TERRAIN_NAMES — otherwise the
     engine's terrain_types config lookup will fail."""

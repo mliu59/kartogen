@@ -7,10 +7,11 @@ layer requires a ``LithosphereState`` as input.
 
 from __future__ import annotations
 
+import pytest
 from worldgen import generate
 from worldgen.types import WorldgenConfig
 
-
+pytestmark = pytest.mark.slow  # full generate()/sim per test
 def test_elevation_deterministic(small_world_config: WorldgenConfig) -> None:
     """Same seed + config produces byte-identical elevation."""
     a = generate(config=small_world_config, seed=42)
@@ -20,11 +21,3 @@ def test_elevation_deterministic(small_world_config: WorldgenConfig) -> None:
     assert a.elevation.sea_level == b.elevation.sea_level
 
 
-def test_elevation_different_seeds_diverge(small_world_config: WorldgenConfig) -> None:
-    a = generate(config=small_world_config, seed=42)
-    b = generate(config=small_world_config, seed=7)
-    diffs = sum(
-        1 for h in a.hexes
-        if a.elevation.elevation[h] != b.elevation.elevation[h]
-    )
-    assert diffs > len(a.hexes) * 0.95

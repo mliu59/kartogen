@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from pathlib import Path
 
 import pytest
 
@@ -15,7 +14,6 @@ from tectonic_sim import (
     crust_type_code,
     crust_type_name,
     load_sim_config,
-    load_sim_config_from_path,
 )
 # OVERLAP_RADIUS_MULTIPLIER was a particle-sim concept; the polygon
 # sim has no per-pair overlap radius (mass intersection is direct).

@@ -155,107 +155,45 @@ culling as a per-tick pipeline. See `tectonic_sim/polygon_sim/` for the
 authoritative implementation; the worldgen side does not know or care
 about the per-tick order.
 
-**Continuous-pose architecture.** Each plate carries a **continuous
-world pose** (`position_km`, `orientation_rad`) plus continuous
-kinematic rates (`velocity_kmpy`, `angular_velocity_rad_per_myr`).
-Per-cell paint arrays (`body_mask`, `body_crust`, `body_age`,
-`body_thickness`) are the **canonical body-frame state** — they
-*don't move* per tick; only the pose does. Each tick:
+**Continuous-pose architecture.** Each plate's canonical state is its
+body-frame paint arrays (`body_mask` / `body_crust` / `body_age` /
+`body_thickness`) plus a continuous world pose (`position_km`,
+`orientation_rad`) about a body-frame rotation pivot (`body_pivot_km`),
+with kinematic rates (`velocity_kmpy`, `angular_velocity_rad_per_myr`).
+The body arrays don't move per tick — only the pose does. Each tick:
+`_advance_pose` integrates the pose; `rasterise` samples body→world (NN
+for mask/crust, mask-weighted bilinear for paint, two-pass so rotation
+leaves no gaps); the per-tick physics modules mutate the world view;
+`derasterise` diffs the world view back into the body frame
+(changed cells only, so the round-trip is mass-preserving). All spatial
+math is **torus-only** — the body↔world maps wrap the offset *before*
+rotating, so plates near the seam don't shear. The pivot tracks the
+plate **centroid** (re-snapped every `recenter_period_ticks`,
+world-preserving) so plates spin about their own centre instead of
+orbiting the origin. Initial motion is **Euler-pole**: each plate's
+drift and spin come from one (generally off-plate) rotation pole, so
+they're physically coherent.
 
-  1. ``_advance_pose`` — pure scalar addition: ``position_km += v·dt``,
-     ``orientation_rad += ω·dt``. No grid resampling, no aliasing.
-  2. ``rasterise`` (in `polygon_sim/rasterize.py`) — for each plate,
-     for each world cell, transform to body coords via the inverse
-     pose, NN-sample the body arrays. Populates the plate's cached
-     world-frame view (``cell_mask`` / ``crust`` / ``age`` /
-     ``thickness``). Also snapshots a *baseline* for the diff at the
-     end of the tick.
-  3. All existing per-tick modules (contention, fusion, momentum,
-     accretion, hotspots, aging, erosion, absorption, divergent fill,
-     culling, rifting) operate on the world-frame view as before.
-     They read and mutate ``p.cell_mask``, ``p.crust``, etc.
-  4. ``derasterise`` — diff the post-module world view against the
-     baseline, propagate only the *changes* (added cells, removed
-     cells, in-place paint mutations) back to each plate's body
-     frame via NN inverse transform. Unchanged cells leave body
-     untouched, so the body↔world round-trip is mass-preserving for
-     cells no module modified.
+**C-C collisions build fold belts.** When two continental plates
+collide the loser's crust column is redeposited inland as orogenic
+mass: a wide **over-rider belt** (hybrid ramp→plateau→taper profile —
+Tibet/Altiplano analogue, relief on a broad plateau set back from the
+suture, not a spike at the contact) plus a narrow **loser-side belt**
+(Himalayan foothill). Extra C-C velocity damping arrests convergence so
+the over-rider can't annihilate the smaller continent into a runaway
+peak, and **fusion** welds a small plate fully into a larger one only
+once momentum has driven their relative velocity near zero. Knobs:
+`folding_*`, `cc_velocity_damping_multiplier`, `fusion_*`.
 
-This replaces the previous discrete-step kinematics
-(``np.roll`` translation + NN/bilinear inverse-resample rotation),
-which had two flaws: (a) NN aliasing erased per-tick rotation under
-~1° angles, making rotation invisible at typical plate sizes;
-(b) a global trail-fill stage refilled rotation-vacated cells with
-fresh oceanic, plugging the visible signal. Under the new
-architecture, plate outlines visibly rotate as organic shapes;
-``_trailing_edge_fill`` is now a nearest-plate gap-assignment for
-divergent boundary spawn only.
-
-**Continental collisions build asymmetric inland fold-belts on BOTH
-plates.** C-C contention distributes folded mass into two belts:
-
-- **Over-rider side** — wide, broad. Inland on the winner's
-  `−velocity` direction, ~120 km depth with 35 km decay. Tibet-plateau
-  analogue. Knobs: `folding_belt_depth_km`, `folding_belt_decay_km`.
-- **Loser side** — narrow, sharp. Inland on the loser's own
-  `−velocity` direction (= opposite, propagates the other way from the
-  suture), starting one cell into the loser's interior, ~50 km depth
-  with 15 km decay. Himalayan-foothill analogue. Knobs:
-  `folding_loser_side_ratio`, `folding_belt_loser_depth_km`,
-  `folding_belt_loser_decay_km`.
-
-Mass accounting per fold event: over-rider gains `folding_ratio · t`,
-loser gains `folding_loser_side_ratio · t`, mantle absorbs the rest.
-At triple junctions, each loser contributes independently into its
-own continent. Belt cells running off-plate or onto oceanic crust
-drop their mass (models belt running into ocean).
-
-**Continental relief is seeded as Perlin fBm noise at t=0.** Continental
-cells get a zero-mean (per-plate) thickness perturbation in physical
-km at continent-scale wavelengths. After sea-level sampling, the thin
-spots become shelves / inland seas / straits and the thick spots
-stand proud — what would otherwise be featureless plate interiors
-turn into varied continents with shelf systems, archipelagos, and
-inland basins. Knobs: `continental_relief_amplitude_km`,
-`continental_relief_wavelength_km`, `continental_relief_octaves`,
-`continental_relief_persistence`. 0 amplitude disables. Combines
-naturally with the decoupled sea-level knob — one sim run yields a
-family of geographies as `sea_level_km` sweeps.
-
-**Edge smoothing is a non-physics blur of crust thickness, applied at
-t=0 and t=final only.** Lives in `polygon_sim/edge_smoothing.py` —
-*deliberately* separate from erosion in `aging.py`. Each pass blends
-per-cell:
-`thickness = (1 − α) · thickness + α · gaussian_filter(thickness)`
-where α is built from two contributions:
-
-  - **Perlin α field** — normalised into
-    `[edge_smoothing_alpha_min, edge_smoothing_alpha_max]`. Same idea
-    as continental_relief noise: large-wavelength patches of "smooth
-    zones" alternating with "sharp zones" across the sim.
-  - **Plate-boundary boost** —
-    `peak · exp(−d_km / falloff_km)` where `d_km` is the toroidal
-    distance from each cell to its nearest plate-boundary cell.
-    Adds extra smoothing right at sutures, decaying inland.
-    `edge_smoothing_boundary_boost_peak = 0` disables it (pure Perlin
-    pass). The distance transform tiles the boundary mask 3× to honor
-    the torus wrap correctly.
-
-Final α is `clip(perlin + boost, 0, 1)`. Gaussian σ comes from
-`edge_smoothing_kernel_km / cell_km`; the filter uses toroidal wrap so
-blur respects the seam. Two passes run with independent Perlin draws
-(separate RNG-tag offsets) so the t=final pass smooths the *evolved*
-sim rather than the initial pattern. Smoothing is global — it crosses
-plate boundaries — which is why sharp boundaries between adjacent
-plates get spatially-modulated softening: some edges stay jagged where
-α is low, others smear into shelves where α is high, and *all*
-boundaries get a configurable baseline smoothing via the boost. The
-pre/post thickness arrays + α fields at both instants flow through
-`raw_snapshot` to `tectonic_sim_views/edge_smoothing/{topo_*.png,
-alpha_*.png, comparison.png}` for inspection.
-
-**Boundary mode is torus-only.** Every spatial query inside
-`tectonic_sim` uses the toroidal shortest-path metric.
+**Initial relief, edge smoothing, divergent fill.** Continental cells
+get a zero-mean Perlin fBm thickness perturbation at t=0
+(`continental_relief_*`) so interiors break into shelves / basins /
+archipelagos after sea-level sampling. A non-physics Gaussian thickness
+blur (`edge_smoothing_*`, in `edge_smoothing.py`, deliberately separate
+from erosion) runs at t=0 and t=final, modulated by a Perlin α field
+plus a plate-boundary boost. Divergent gaps fill with fresh oceanic
+crust, or — when their surround is continental above a threshold — a
+continental **basin** (`divergent_fill_*`).
 
 **Single source of truth for configuration.** `config/tectonic_sim.toml`
 holds every tunable for the polygon sim. Worldgen reads it directly
@@ -265,19 +203,10 @@ assigns the resulting `SimConfig` to `WorldgenConfig.tectonics`.
 `SimConfig`; there is no second source of tectonic-sim tunables.
 
 **Sea level is decoupled from crust dynamics.** `sea_level_km` is a
-passive sampling threshold + elevation-render colormap midpoint;
-nothing in the per-tick polygon sim reads it. Cells carry thickness,
-age, crust type, and plate id — not "above water." Isostasy returns
-signed elevation in km from a mantle reference, and sea level is just
-the water line on that signed axis. The payoff is that two natural
-sweeps come for free:
-
-- **Hold the world fixed, vary sea level.** Raising the threshold
-  instantly converts shallow continental hexes to epicontinental sea —
-  no sim rerun.
-- **Hold sea level fixed, vary tectonic parameters.** Plate dynamics
-  alone reshape geography; the water line stays at the same physical
-  reference so before/after maps are directly comparable.
+passive sampling threshold on the signed isostatic elevation; the
+per-tick sim never reads it. So one run yields a family of geographies
+as the water line sweeps, and tectonic params can be varied at a fixed
+water line for directly comparable maps.
 
 ## `param_temperature` — physics-parameter exploration
 
@@ -350,7 +279,10 @@ into the existing dicts. This is the extension point as the simulator grows.
 
 `python -m worldgen` is the canonical entry point — it generates a world,
 serializes it to `snapshot.json`, and renders every available layer as a
-PNG (plus a per-plate `plates/plate_NN.png` and a drift `drift.gif`).
+PNG under `layers/` (continuous layers carry a colour-scale legend) plus
+the `tectonic_sim_views/` renders (partition / crust / topography /
+thickness + drift GIFs). Plate structure is inspected through
+`tectonic_sim_views/`, not per-hex plate layers.
 
 ```
 python -m worldgen --seed 42 --out exports/
@@ -396,7 +328,7 @@ otherwise prefer extending `python -m worldgen`.
 
 **Formatting & linting.** `ruff` for both. Config in `pyproject.toml`.
 
-**Testing.** `pytest`. Tests in `tests/` mirror `worldgen/`. Use fixtures for common world setups.
+**Testing.** `pytest`. Tests in `tests/` mirror `worldgen/`. Use fixtures for common world setups. End-to-end tests that drive a full `generate()`/sim are marked `@pytest.mark.slow` (module-level `pytestmark`); skip them during quick iteration with `pytest -m "not slow"` (sub-second), and run the full suite before committing.
 
 **Naming.**
 - `layer` = one pipeline stage; `LayerOutput` = its frozen dataclass result

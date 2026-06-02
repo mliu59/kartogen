@@ -158,9 +158,10 @@ def load_snapshot(path: Path) -> WorldSnapshot:
     return WorldSnapshot.from_dict(json.loads(path.read_text(encoding="utf-8")))
 
 
-# Standard renderable layers (in order). ``plates`` is appended automatically
-# when ``world.plates is not None`` so non-plates worlds don't get a
-# placeholder image.
+# Standard renderable layers (in order). The plate-ownership renders
+# (``plates`` / ``plates_t0``) are intentionally NOT exported as hex
+# layers — plate structure is inspected through the ``tectonic_sim_views``
+# (partition / crust / topography) instead.
 DEFAULT_RENDER_LAYERS: tuple[str, ...] = (
     "elevation",
     "temperature",
@@ -173,7 +174,6 @@ DEFAULT_RENDER_LAYERS: tuple[str, ...] = (
     "continentality",
     "gyres",
     "ocean_depth",
-    "plates_t0",
 )
 
 
@@ -569,8 +569,6 @@ def export_world(
             elevation.png
             temperature.png
             ...
-          plates/
-            plate_NN.png
           drift.gif
 
     Requires Pillow (the ``[preview]`` extra).
@@ -594,27 +592,12 @@ def export_world(
     layers_dir = folder / "layers"
     layers_dir.mkdir(exist_ok=True)
 
-    # "plates" is auto-appended when the tectonics step ran.
     layers_to_render: list[str] = list(render_layers)
-    if world.lithosphere is not None and "plates" not in layers_to_render:
-        layers_to_render.append("plates")
     layers_to_render = _layers_available_at(world.stop_after, tuple(layers_to_render))
 
     for layer in layers_to_render:
         img = preview.render(world, layer, hex_px=hex_px)
         img.save(layers_dir / f"{layer}.png")
-
-    # Per-plate final-state footprints (post-warp). One PNG per plate goes
-    # into a ``plates/`` subfolder so the layers/ listing stays clean.
-    # Iterate the *simulated* plate set (``lithosphere.plates``) rather
-    # than the t=0 ``PlateField`` — under param_temperature randomization
-    # the two can carry different ids.
-    if world.lithosphere is not None:
-        plates_dir = folder / "plates"
-        plates_dir.mkdir(exist_ok=True)
-        for plate in world.lithosphere.plates:
-            img = preview.render_single_plate(world, plate.id, hex_px=hex_px)
-            img.save(plates_dir / f"plate_{plate.id:02d}.png")
 
     # The drift / thickness / topography animations are emitted by the
     # polygon-sim view exporter below — they live inside

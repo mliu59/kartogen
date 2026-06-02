@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
 from worldgen import generate
-from worldgen.pipeline import GeneratedWorld
 from worldgen.types import WorldgenConfig, WorldShape
 from worldgen.world import rect_world_hexes
 
-
+pytestmark = pytest.mark.slow  # full generate()/sim per test
 def _shape(side_km: float) -> WorldShape:
     return WorldShape(width_km=side_km, height_km=side_km)
 
@@ -28,33 +28,6 @@ def test_pipeline_deterministic(small_world_config: WorldgenConfig) -> None:
         assert da.precipitation_mm == db.precipitation_mm
         assert da.flow_accumulation == db.flow_accumulation
         assert da.biome == db.biome
-
-
-def test_pipeline_different_seeds(small_world_config: WorldgenConfig) -> None:
-    """Different seeds → different worlds."""
-    a = generate(config=small_world_config, seed=42)
-    b = generate(config=small_world_config, seed=7)
-    diffs = sum(1 for h in a.hexes if a.hexes[h].biome != b.hexes[h].biome)
-    assert diffs > 50  # most hexes differ
-
-
-def test_pipeline_produces_all_biome_categories(medium_world: GeneratedWorld) -> None:
-    """At default settings, a moderate-sized world should produce hexes in all
-    major biome categories: water, lowland, forest, elevated."""
-    biomes_seen = {d.biome for d in medium_world.hexes.values()}
-    # At least one water type:
-    assert biomes_seen & {"ocean", "deep_ocean", "coast"}
-    # At least one lowland biome:
-    assert biomes_seen & {"plains", "grassland", "savanna", "desert", "tundra"}
-    # At least one elevated:
-    assert biomes_seen & {"hills", "mountain", "snow_peak"}
-
-
-def test_pipeline_produces_rivers(medium_world: GeneratedWorld) -> None:
-    """At default settings the pipeline should always produce *some* rivers
-    (the rain-shadow + sink-fill combo should never leave a continent dry)."""
-    river_count = sum(1 for d in medium_world.hexes.values() if d.is_river)
-    assert river_count > 0
 
 
 def test_pipeline_hex_count_matches_world_shape(

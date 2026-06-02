@@ -2,7 +2,7 @@
 
 Given a polygon-sim final state and two sim-centred km endpoints
 ``p1=(x1, y1)``, ``p2=(x2, y2)``, this module samples a configurable
-number of points along the wrap-aware shortest segment from ``p1`` to
+number of points along the **literal** straight segment from ``p1`` to
 ``p2`` and returns the per-sample owner / crust / age / thickness /
 elevation as parallel 1D arrays.
 
@@ -21,8 +21,10 @@ colours line up visually with the partition view.
 Sampling is **nearest-neighbour** in cell space — same convention
 worldgen's per-hex sampler uses. That means plate boundaries appear as
 honest step changes, not smoothed-over interpolation. The segment is
-wrap-aware: a transect crossing the toroidal seam Just Works because
-the displacement from ``p1`` to ``p2`` uses ``WorldRect.wrapped_delta_xy``.
+interpreted **literally** (the direct Cartesian line from ``p1`` to
+``p2``, not the toroidal-shortest path); per-sample cell lookups still
+wrap modulo the grid, so a segment that runs off one edge reads
+sensible wrapped values.
 """
 
 from __future__ import annotations
@@ -224,10 +226,6 @@ def render_transect(
     d = result.distance_km
     d_lo = float(d[0])
     d_hi = float(d[-1])
-    d_span = max(d_hi - d_lo, 1e-9)
-
-    def x_of(i: int) -> float:
-        return plot_left + (d[i] - d_lo) / d_span * (plot_right - plot_left)
 
     # Render each panel.
     _draw_panel(

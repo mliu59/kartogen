@@ -8,32 +8,21 @@ from tectonic_sim.types import WorldRect
 
 from tectonic_sim.polygon_sim.types import (
     PolygonPlate)
+from tectonic_sim.polygon_sim.kinematics import _mask_centroid_km
 
 
 def _plate_centroid_km(
     plate: PolygonPlate, domain: WorldRect, gy: int, gx: int, cell_km: float) -> tuple[float, float] | None:
-    """Wrap-aware circular-mean centroid of the plate's owned cells.
+    """Torus-aware centroid of the plate's owned cells (km, unsnapped).
 
-    Picks the first owned cell as reference, takes wrapped deltas to
-    every other owned cell, averages, and re-wraps. The result is the
-    geometric centroid of the cell-mask on the torus.
+    Delegates to ``kinematics._mask_centroid_km``, which uses the
+    trigonometric (circular) mean per axis — a reference-point-free
+    construction that returns the correct centroid even for a plate that
+    straddles the seam. Used here to define the contact normal between
+    two plates, so it is NOT cell-snapped.
     """
-    ys, xs = np.where(plate.cell_mask)
-    if ys.size == 0:
-        return None
-    half_w = 0.5 * gx * cell_km
-    half_h = 0.5 * gy * cell_km
-    c_kx = (xs + 0.5) * cell_km - half_w
-    c_ky = (ys + 0.5) * cell_km - half_h
-    ref_x, ref_y = float(c_kx[0]), float(c_ky[0])
-    dx, dy = domain.wrapped_delta_xy(c_kx - ref_x, c_ky - ref_y)
-    cent_x = ref_x + float(dx.mean())
-    cent_y = ref_y + float(dy.mean())
-    cent_x = ((cent_x + domain.half_width_km) % domain.width_km
-              ) - domain.half_width_km
-    cent_y = ((cent_y + domain.half_height_km) % domain.height_km
-              ) - domain.half_height_km
-    return cent_x, cent_y
+    return _mask_centroid_km(
+        plate.cell_mask, domain, gy, gx, cell_km, snap=False)
 
 
 def _apply_momentum_exchange(
@@ -53,8 +42,8 @@ def _apply_momentum_exchange(
         exactly at full contact (plates lock).
       - ``e = 1``: perfectly elastic, plates bounce off with reversed
         normal velocities.
-      Tectonic plates are dominantly inelastic; ``e = 0.1`` is the
-      default (almost-lock with slight spring-back).
+      Tectonic plates are dominantly inelastic; the configured default
+      (``momentum_restitution``) is 0.0 — a full normal-velocity lock.
 
     Impulse is scaled by ``contact_fraction = overlap_cells /
     min(mass_A, mass_B)`` so glancing brushes do little, full

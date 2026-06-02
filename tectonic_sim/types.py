@@ -73,24 +73,6 @@ class WorldRect:
 
     # --- Toroidal geometry helpers ---
 
-    def wrap_positions(self, positions_km: np.ndarray) -> np.ndarray:
-        """Wrap an ``(N, 2)`` array of positions onto the toroidal domain.
-
-        Coordinates are remapped to ``[-half_width, +half_width)`` ×
-        ``[-half_height, +half_height)``. Returns a new array; input is
-        not mutated.
-        """
-        out = np.empty_like(positions_km)
-        out[:, 0] = (
-            (positions_km[:, 0] + self.half_width_km) % self.width_km
-            - self.half_width_km
-        )
-        out[:, 1] = (
-            (positions_km[:, 1] + self.half_height_km) % self.height_km
-            - self.half_height_km
-        )
-        return out
-
     def wrapped_delta_xy(
         self, dx: FloatLike, dy: FloatLike,
     ) -> tuple[FloatLike, FloatLike]:
@@ -98,19 +80,6 @@ class WorldRect:
         wx = (dx + self.half_width_km) % self.width_km - self.half_width_km
         wy = (dy + self.half_height_km) % self.height_km - self.half_height_km
         return wx, wy
-
-    def wrapped_distance_km(
-        self,
-        a_xy_km: np.ndarray,
-        b_xy_km: np.ndarray,
-    ) -> np.ndarray:
-        """Toroidal Euclidean distance between paired points."""
-        diff = a_xy_km - b_xy_km
-        if diff.ndim == 1:
-            dx, dy = self.wrapped_delta_xy(diff[0], diff[1])
-            return float(np.hypot(dx, dy))
-        wx, wy = self.wrapped_delta_xy(diff[:, 0], diff[:, 1])
-        return np.hypot(wx, wy)
 
 
 @dataclass(frozen=True)
@@ -170,18 +139,24 @@ class SimConfig:
     sea_level_km: float
 
     # --- Collision ---
-    orogeny_uplift_per_overlap_km: float
     folding_ratio: float
-    folding_displacement_km: float
-    subduction_arc_uplift_km: float
-    # Continental-continental fold-and-thrust belt. Each tick, the
-    # contested-cell fold mass is distributed inland (opposite the
-    # over-rider's velocity) across a band of depth
-    # ``folding_belt_depth_km``, with weights decaying exponentially
-    # with e-folding scale ``folding_belt_decay_km``. Setting depth ≤
-    # cell size collapses the band to the legacy suture-only deposit.
+    # Continental-continental fold-and-thrust belt (over-rider side).
+    # Each tick, the contested-cell fold mass is distributed inland
+    # (opposite the over-rider's velocity) across a band of depth
+    # ``folding_belt_depth_km`` using a **hybrid plateau profile**:
+    # low at the suture, a smooth half-cosine RAMP up over
+    # ``folding_belt_ramp_km``, a broad flat PLATEAU across the middle,
+    # then a cosine TAPER to zero over ``folding_belt_taper_km`` at the
+    # far inland edge. This matches a mature double-vergent orogen
+    # (the suture is a structural low; relief sits inland on a broad
+    # high plateau — Tibet/Altiplano). Weights are normalised to sum to
+    # 1 so the total deposited mass is exactly ``folding_ratio · loser
+    # thickness`` regardless of profile shape. Degenerate cases:
+    # ramp+taper ≥ depth collapses the plateau to zero → a smooth
+    # inland-peaked bump; ramp = taper = 0 → a flat top-hat.
     folding_belt_depth_km: float
-    folding_belt_decay_km: float
+    folding_belt_ramp_km: float
+    folding_belt_taper_km: float
     # Loser-side fold belt — narrower, sharper inland deposit on the
     # *down-going* plate's near-suture interior. Models the Himalayan
     # foothill / Lesser-Himalaya pattern: slices of the underthrusting
@@ -198,11 +173,31 @@ class SimConfig:
 
     # --- Velocity damping ---
     velocity_damping_strength: float
+    # Extra damping multiplier applied to the share of a plate's
+    # contested cells that are in continental–continental contention
+    # (this plate continental AND another continental plate claims the
+    # same cell). C-C collisions should bleed off convergence faster
+    # than C-O / O-O contacts: two buoyant continents lock and the
+    # kinetic energy goes into crustal thickening rather than continued
+    # convergence. Higher → the smaller continent is overridden less
+    # before the pair arrests, so less of its column is carved and
+    # dumped as fold mass (lower runaway peaks). 1.0 = no extra C-C
+    # damping (uniform with other contacts).
+    cc_velocity_damping_multiplier: float
 
     # --- Erosion / snapshot capture ---
     erosion_period: int
     erosion_strength: float
     snapshot_period_ticks: int
+    # How often (in ticks) to re-snap each plate's rotation pivot
+    # (``body_pivot_km``) onto its current body centroid. The pivot keeps
+    # the plate spinning about its own centre of area; as the plate
+    # deforms the centroid migrates, so the pivot is periodically
+    # re-anchored (world-preserving — only the pivot label moves). 1 =
+    # every tick (pivot always tracks the centroid); larger = cheaper but
+    # the pivot lags the centroid between recenters. 0 disables (pivot
+    # stays where seeding put it).
+    recenter_period_ticks: int
 
     # =====================================================================
     # Polygon-sim per-cell physics fields. All read by the matching
@@ -217,6 +212,14 @@ class SimConfig:
     momentum_contact_boost: float
     fusion_overlap_threshold: float
     fusion_both_continental_only: bool
+    # Suturing gate: a candidate pair only welds into one plate once
+    # momentum exchange has arrested their convergence — i.e. their
+    # contact-normal relative velocity has decayed to at or below this
+    # (km/Myr). Fusion is then the natural endpoint of momentum
+    # convergence rather than a parallel mechanic that fires the instant
+    # masks overlap. Large value → fuses on overlap alone (legacy);
+    # small value → only fully-locked pairs weld.
+    fusion_max_relative_velocity_kmpy: float
     accretion_prob_per_boundary_per_tick: float
     accretion_cells_per_event: int
     accretion_inland_offset_min_km: float
@@ -252,10 +255,9 @@ class SimConfig:
     # plates; smaller redistribute to neighbours.
     fragment_spawn_threshold: int
 
-    # Alpha-complex circumradius cutoffs (× cell_km). Used by polygon
-    # extraction and initial-state alpha-complex build.
+    # Alpha-complex circumradius cutoff (× cell_km). Used by polygon
+    # extraction.
     alpha_factor: float
-    init_alpha_factor: float
 
     # Continental priority multiplier in per-cell contention. At 50, a
     # 1-cell continental plate has the same priority as a 50-cell
@@ -271,6 +273,27 @@ class SimConfig:
     # by their over-rider via thickness transfer to a neighbour, and
     # the cell reverts to oceanic. 0 disables.
     min_continental_thickness_km: float
+
+    # --- Divergent-gap fill: continental-basin override ---
+    #
+    # When the trailing-edge fill encounters a connected gap whose
+    # immediate surround is overwhelmingly continental, stamp the gap
+    # as a *continental basin* instead of fresh oceanic ridge. This
+    # captures the geology of foreland basins / inland troughs that
+    # form between converging continental blocks (C-C suture interior)
+    # — material plastered into the gap is continental, not oceanic.
+    #
+    #   divergent_fill_continental_threshold — surround continental
+    #     fraction at or above which the component fills as continental.
+    #     Set to 1.0 to disable (always-oceanic, legacy behaviour).
+    #
+    #   divergent_fill_basin_depth_km — how much thinner the basin
+    #     floor is than the mean continental thickness of its surround.
+    #     Per-component scalar; same thickness across the whole basin.
+    #     Clamped at min_continental_thickness_km so the cell isn't
+    #     reabsorbed on the next tick.
+    divergent_fill_continental_threshold: float
+    divergent_fill_basin_depth_km: float
 
     # Initial plate-shape naturalisation (Methods 1+2: domain warp +
     # power weights). All values per tick or per draw.

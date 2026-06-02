@@ -33,9 +33,9 @@ def test_zero_temperature_is_identity() -> None:
     """``T = 0`` returns the input unchanged."""
     base = _Toy(x=1.0, y=2.0, n=5, label="hi")
     specs = (
-        FieldRandomizer("x", std=10.0, minimum=None, maximum=None),
-        FieldRandomizer("y", std=10.0, minimum=None, maximum=None),
-        FieldRandomizer("n", std=2.0, minimum=0, maximum=100, is_integer=True),
+        FieldRandomizer("x", std=10.0),
+        FieldRandomizer("y", std=10.0),
+        FieldRandomizer("n", std=2.0, hard_min=0, hard_max=100, is_integer=True),
     )
     rng = np.random.Generator(np.random.PCG64(0))
     out = randomize_dataclass_fields(base, specs, 0.0, rng)
@@ -51,7 +51,7 @@ def test_negative_temperature_raises() -> None:
 
 def test_unknown_field_in_spec_raises() -> None:
     base = _Toy(x=1.0, y=2.0, n=5, label="hi")
-    specs = (FieldRandomizer("bogus", std=1.0, minimum=None, maximum=None),)
+    specs = (FieldRandomizer("bogus", std=1.0),)
     rng = np.random.Generator(np.random.PCG64(0))
     with pytest.raises(ValueError, match=r"unknown field"):
         randomize_dataclass_fields(base, specs, 1.0, rng)
@@ -60,7 +60,7 @@ def test_unknown_field_in_spec_raises() -> None:
 def test_fields_not_in_spec_pass_through_unchanged() -> None:
     """A field omitted from the spec tuple is untouched."""
     base = _Toy(x=1.0, y=2.0, n=5, label="hi")
-    specs = (FieldRandomizer("x", std=10.0, minimum=None, maximum=None),)
+    specs = (FieldRandomizer("x", std=10.0),)
     rng = np.random.Generator(np.random.PCG64(0))
     out = randomize_dataclass_fields(base, specs, 1.0, rng)
     # y, n, label all unchanged.
@@ -71,11 +71,11 @@ def test_fields_not_in_spec_pass_through_unchanged() -> None:
     assert out.x != base.x
 
 
-def test_clip_bounds_enforced() -> None:
-    """Even at huge temperature, drawn values respect the clip range."""
+def test_hard_bounds_enforced() -> None:
+    """Even at huge temperature, drawn values respect the hard bounds."""
     base = _Toy(x=5.0, y=0.0, n=0, label="hi")
     specs = (
-        FieldRandomizer("x", std=10.0, minimum=2.0, maximum=8.0),
+        FieldRandomizer("x", std=10.0, hard_min=2.0, hard_max=8.0),
     )
     for seed in range(20):
         rng = np.random.Generator(np.random.PCG64(seed))
@@ -83,10 +83,27 @@ def test_clip_bounds_enforced() -> None:
         assert 2.0 <= out.x <= 8.0
 
 
+def test_relative_clamp_band_tracks_base() -> None:
+    """With no hard bounds, draws stay within ``base ± clamp_sigmas·(T·std)``
+    — a band that tracks the base config value, so two different base
+    values get windows centred on each."""
+    specs_lo = (FieldRandomizer("x", std=1.0, clamp_sigmas=3.0),)
+    base_lo = _Toy(x=10.0, y=0.0, n=0, label="hi")
+    base_hi = _Toy(x=1000.0, y=0.0, n=0, label="hi")
+    for seed in range(50):
+        out_lo = randomize_dataclass_fields(
+            base_lo, specs_lo, 2.0, np.random.Generator(np.random.PCG64(seed)))
+        out_hi = randomize_dataclass_fields(
+            base_hi, specs_lo, 2.0, np.random.Generator(np.random.PCG64(seed)))
+        # band = 3 * (2 * 1.0) = 6 around each base.
+        assert 10.0 - 6.0 <= out_lo.x <= 10.0 + 6.0
+        assert 1000.0 - 6.0 <= out_hi.x <= 1000.0 + 6.0
+
+
 def test_integer_field_returns_int() -> None:
     base = _Toy(x=0.0, y=0.0, n=5, label="hi")
     specs = (
-        FieldRandomizer("n", std=3.0, minimum=0, maximum=100, is_integer=True),
+        FieldRandomizer("n", std=3.0, hard_min=0, hard_max=100, is_integer=True),
     )
     rng = np.random.Generator(np.random.PCG64(0))
     out = randomize_dataclass_fields(base, specs, 1.0, rng)
@@ -98,7 +115,7 @@ def test_integer_field_honours_bounds_after_rounding() -> None:
     after rounding so the integer result still respects bounds."""
     base = _Toy(x=0.0, y=0.0, n=5, label="hi")
     specs = (
-        FieldRandomizer("n", std=100.0, minimum=2, maximum=10, is_integer=True),
+        FieldRandomizer("n", std=100.0, hard_min=2, hard_max=10, is_integer=True),
     )
     for seed in range(30):
         rng = np.random.Generator(np.random.PCG64(seed))
@@ -111,8 +128,8 @@ def test_determinism_per_seed() -> None:
     """Same seed → same output across calls."""
     base = _Toy(x=1.0, y=2.0, n=5, label="hi")
     specs = (
-        FieldRandomizer("x", std=10.0, minimum=None, maximum=None),
-        FieldRandomizer("y", std=10.0, minimum=None, maximum=None),
+        FieldRandomizer("x", std=10.0),
+        FieldRandomizer("y", std=10.0),
     )
     a = randomize_dataclass_fields(
         base, specs, 1.0, np.random.Generator(np.random.PCG64(42)),
@@ -129,8 +146,10 @@ def test_temperature_scales_std() -> None:
     Statistical check: stddev of draws at T=2 should be ~2× that at T=1
     over a few hundred draws."""
     base = _Toy(x=0.0, y=0.0, n=0, label="hi")
+    # High clamp_sigmas so the relative band doesn't trim the tails and
+    # bias the empirical std this test measures.
     specs = (
-        FieldRandomizer("x", std=1.0, minimum=None, maximum=None),
+        FieldRandomizer("x", std=1.0, clamp_sigmas=100.0),
     )
     draws_t1 = np.array([
         randomize_dataclass_fields(
@@ -212,8 +231,11 @@ def test_randomize_sim_config_respects_bounds_under_extreme_temperature(
     still be in valid bounds after every draw across many seeds."""
     for seed in range(30):
         out = randomize_sim_config(default_sim_config, 5.0, seed=seed)
-        # Spot-check the physically critical bounds.
-        assert 2 <= out.plate_count <= 20
+        # Spot-check the physical hard invariants. Upper magnitudes are
+        # now governed by the relative clamp band (which scales with T),
+        # not a fixed absolute ceiling — so we only assert the genuine
+        # invariants: >=2 plates, a valid fraction, and positivity.
+        assert out.plate_count >= 2
         assert 0.0 <= out.continental_fraction <= 1.0
         assert out.motion_speed_kmpy > 0
         assert out.continental_thickness_km > 0

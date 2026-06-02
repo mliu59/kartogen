@@ -11,10 +11,11 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
 from worldgen import export_world
 from worldgen.types import WorldgenConfig, WorldShape
 
-
+pytestmark = pytest.mark.slow  # full generate()/sim per test
 def _cfg_with_snapshots(
     base: WorldgenConfig, period: int, side_km: float = 100.0,
 ) -> WorldgenConfig:

@@ -6,7 +6,6 @@ import random
 
 import numpy as np
 import pytest
-
 from tectonic_sim.noise import PerlinNoise2D, fbm, fbm_grid, ridged_fbm
 
 

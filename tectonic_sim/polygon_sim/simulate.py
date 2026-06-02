@@ -25,7 +25,7 @@ from tectonic_sim.polygon_sim.hotspots import (
     _apply_hotspot_eruptions,
     _apply_hotspot_prehistory,
     _initialize_hotspots)
-from tectonic_sim.polygon_sim.kinematics import _advance_pose
+from tectonic_sim.polygon_sim.kinematics import _advance_pose, _recenter_pivots
 from tectonic_sim.polygon_sim.momentum import _apply_momentum_exchange
 from tectonic_sim.polygon_sim.polygons import (
     _build_polygons_for_render,
@@ -188,7 +188,15 @@ def simulate_rigid_polygon(
     for tick in tick_iter:
         # 1) Continuous kinematics: just advance the pose. No paint
         #    resampling; the body-frame arrays stay put.
-        _advance_pose(plates, dt, domain)
+        _advance_pose(plates, dt, domain, cell_km)
+        # 1b) Periodically re-snap each plate's rotation pivot onto its
+        #     current body centroid (world-preserving) so it keeps
+        #     spinning about its own centre of area and the world→body
+        #     wrap seam stays outside the plate. Uses the post-advance
+        #     orientation so the pivot shift is rotated consistently.
+        if (sim_config.recenter_period_ticks > 0
+                and tick % sim_config.recenter_period_ticks == 0):
+            _recenter_pivots(plates, domain, gy, gx, cell_km)
 
         # 2) Rasterise body → world for every plate. Fills each plate's
         #    cached cell_mask / crust / age / thickness with the world
@@ -202,7 +210,8 @@ def simulate_rigid_polygon(
         total_collisions += _apply_momentum_exchange(
             plates, domain, gy, gx, cell_km, sim_config)
         _apply_velocity_damping(plates, sim_config)
-        total_fusions += _apply_fusion(plates, sim_config)
+        total_fusions += _apply_fusion(
+            plates, sim_config, domain, gy, gx, cell_km)
         _resolve_contention(plates, gy, gx, sim_config, cell_km)
         # Divergent trailing-edge fill: nearest-plate gap assignment.
         # As plates drift apart their world-frame coverage shrinks at
@@ -252,9 +261,12 @@ def simulate_rigid_polygon(
         if tick % 10 == 0:
             alive = sum(1 for p in plates if p.alive)
             timeline.append((tick, alive))
-            # Diagnostic: per-tick state snapshot of the largest plates.
-            # Flags any plate whose mass dropped by >25 % since the
-            # previous tick — easy way to spot mid-sim decimation events.
+            # Diagnostic: per-tick decimation watchdog. Flags any plate
+            # whose mass dropped by >50 % in a 10-tick window — surfaces
+            # the kind of catastrophic mid-sim plate destruction that
+            # the seam-wrap / NN-aliasing fixes targeted. 50 % is loose
+            # enough not to fire on routine contention erosion; tighten
+            # to 0.75 if hunting smaller leaks again.
             if not hasattr(simulate_rigid_polygon, "_last_masses"):
                 simulate_rigid_polygon._last_masses = {}  # type: ignore[attr-defined]
             last_masses = simulate_rigid_polygon._last_masses  # type: ignore[attr-defined]
@@ -265,14 +277,13 @@ def simulate_rigid_polygon(
                 m = int(p.cell_mask.sum())
                 cur[p.pid] = m
                 prev = last_masses.get(p.pid)
-                if prev is not None and prev > 200 and m < 0.75 * prev:
+                if prev is not None and prev > 500 and m < 0.50 * prev:
                     print(
                         f"  [tick {tick:3d}] DECIMATION: plate {p.pid} "
                         f"mass {prev} -> {m} ({m / prev:.0%}); "
                         f"pos=({float(p.position_km[0]):+7.1f}, "
                         f"{float(p.position_km[1]):+7.1f}) km, "
-                        f"orient={float(p.orientation_rad):+.2f} rad "
-                        f"({float(p.orientation_rad) * 57.296:+.1f}°)"
+                        f"orient={float(p.orientation_rad):+.2f} rad"
                     )
             simulate_rigid_polygon._last_masses = cur  # type: ignore[attr-defined]
         if capture_every > 0 and tick % capture_every == 0:

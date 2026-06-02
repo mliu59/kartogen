@@ -97,12 +97,32 @@ class PolygonPlate:
     angular_velocity_rad_per_myr: float = 0.0
 
     # --- Continuous pose in world km-space ---
-    # World-frame position of the body origin (the body-frame point that
-    # was at (0, 0) when the plate was seeded). Updated by continuous
-    # kinematics each tick. Wrapped to the torus.
+    # World-frame position of the body origin. **Snapped to an integer
+    # multiple of cell_km each tick** — this is essential to make the
+    # body↔world NN sampling round-trip exact. Non-integer-cell offsets
+    # cause floor() to give different cell indices on the forward and
+    # inverse passes (off-by-1 in some cells), which leaks mass and
+    # produces fragment artefacts at the seams. Sub-cell translation
+    # remainder accumulates in ``position_carry_km`` until it crosses
+    # the half-cell threshold.
     position_km: np.ndarray = None  # type: ignore[assignment]
+    # Sub-cell translation accumulator (km). Each tick, kinematics adds
+    # ``velocity_kmpy * dt`` to the carry; when the carry magnitude
+    # exceeds half a cell, the carry is flushed into ``position_km``
+    # (which is then re-wrapped to the torus).
+    position_carry_km: np.ndarray = None  # type: ignore[assignment]
     # World-frame orientation of the body axes (radians, counter-clockwise).
     orientation_rad: float = 0.0
+    # Body-frame rotation pivot (body-km). The plate rotates about THIS
+    # body point, which maps to ``position_km`` in the world. It is kept
+    # on the plate's body-frame centroid (snapped to integer cells) by
+    # the periodic recenter step in ``kinematics._recenter_pivots`` — so
+    # a plate spins about its own centre of area rather than orbiting a
+    # distant fixed origin, and the world→body wrap discontinuity sits at
+    # the antipode of the centroid (far outside the plate) instead of
+    # cutting through it. Maps: world = R(θ)·(body − pivot) + position;
+    # body = R(−θ)·wrap(world − position) + pivot.
+    body_pivot_km: np.ndarray = None  # type: ignore[assignment]
 
     # --- Body-frame canonical state (primary) ---
     # All four arrays share the same (gy, gx) shape as the world grid,

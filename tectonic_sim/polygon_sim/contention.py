@@ -12,6 +12,48 @@ from tectonic_sim.polygon_sim.types import (
     PolygonPlate)
 
 
+def _hybrid_belt_weights(
+    depth_cells: int, ramp_cells: int, taper_cells: int,
+) -> np.ndarray:
+    """Over-rider fold-belt deposition profile across ``k = 0 ..
+    depth_cells-1`` cells inland from the suture.
+
+    Shape: low at the suture (k=0), a smooth half-cosine **ramp** up to
+    1 over the first ``ramp_cells``, a flat **plateau** (=1) across the
+    middle, then a cosine **taper** back to 0 over the last
+    ``taper_cells``. Normalised to sum to 1 so the total deposited mass
+    is independent of the profile shape — only its spatial spread
+    changes.
+
+    Degenerate cases fall out naturally: ``ramp_cells + taper_cells >=
+    depth_cells`` collapses the plateau to zero (a smooth inland-peaked
+    bump); ``ramp_cells = taper_cells = 0`` gives a flat top-hat;
+    ``depth_cells = 1`` gives a single unit-weight cell at the suture.
+    """
+    depth_cells = max(1, int(depth_cells))
+    ramp_cells = max(0, int(ramp_cells))
+    taper_cells = max(0, int(taper_cells))
+    # Clamp so ramp + taper never exceed the belt; the taper yields to
+    # the ramp when the two would overlap.
+    ramp_cells = min(ramp_cells, depth_cells)
+    taper_cells = min(taper_cells, depth_cells - ramp_cells)
+
+    w = np.ones(depth_cells, dtype=np.float64)
+    if ramp_cells > 0:
+        # Cell-centred fraction so the suture cell (k=0) is already
+        # slightly above zero rather than exactly zero.
+        frac = (np.arange(ramp_cells, dtype=np.float64) + 0.5) / ramp_cells
+        w[:ramp_cells] = 0.5 * (1.0 - np.cos(np.pi * frac))
+    if taper_cells > 0:
+        frac = (np.arange(taper_cells, dtype=np.float64) + 0.5) / taper_cells
+        w[depth_cells - taper_cells:] = 0.5 * (1.0 + np.cos(np.pi * frac))
+
+    total = w.sum()
+    if total > 0.0:
+        w /= total
+    return w
+
+
 def _global_owner(plates: list[PolygonPlate], gy: int, gx: int) -> np.ndarray:
     """Snapshot the unique-owner-per-cell map (pid or -1)."""
     owner = np.full((gy, gx), -1, dtype=np.int64)
@@ -46,8 +88,9 @@ def _resolve_contention(
 
       * **Over-rider belt** — wide, broad. ``folding_ratio ·
         loser_thick`` distributed inland along the winner's −velocity
-        across ``folding_belt_depth_km`` with e-folding
-        ``folding_belt_decay_km``. Tibet-plateau analogue.
+        across ``folding_belt_depth_km`` using the hybrid plateau kernel
+        (low at the suture, ``folding_belt_ramp_km`` ramp, flat plateau,
+        ``folding_belt_taper_km`` taper). Tibet-plateau analogue.
 
       * **Loser belt** — narrow, sharp. ``folding_loser_side_ratio ·
         loser_thick`` distributed along the LOSER's own −velocity
@@ -124,9 +167,11 @@ def _resolve_contention(
     # collision front sits at the over-rider's leading edge, so −velocity
     # points back into the continent's interior.
     #
-    # The belt depth is ``folding_belt_depth_km`` cells; the weight at
-    # offset k cells from the suture is ``exp(-k·cell_km / decay_km)``,
-    # then renormalized so weights sum to 1 over the depth range. Since
+    # The belt depth is ``folding_belt_depth_km`` cells; the weight
+    # profile across that depth is the hybrid plateau kernel
+    # (``_hybrid_belt_weights``: low at the suture, ramp up, broad flat
+    # plateau, cosine taper at the far edge), renormalised so weights
+    # sum to 1 over the depth range. Since
     # ``cleared_thicks`` is the post-clearance thickness, the deposit
     # adds to the *winner's* row at each band-target cell, restricted to
     # cells that (a) belong to the winner's plate after clearance and
@@ -160,15 +205,15 @@ def _resolve_contention(
         belt_depth_cells = max(
             1, int(math.ceil(sim_config.folding_belt_depth_km / cell_km)),
         )
-        decay_cells = max(
-            1e-6, sim_config.folding_belt_decay_km / cell_km,
+        ramp_cells = int(round(sim_config.folding_belt_ramp_km / cell_km))
+        taper_cells = int(round(sim_config.folding_belt_taper_km / cell_km))
+        # Hybrid plateau profile: low at the suture (k=0), ramp up, flat
+        # plateau across the middle, cosine taper to zero at the far
+        # inland edge. The suture is no longer the peak — relief sits on
+        # the broad plateau set back from the collision front.
+        weights = _hybrid_belt_weights(
+            belt_depth_cells, ramp_cells, taper_cells,
         )
-        # Winner belt starts AT the suture (k=0) — the suture cell is
-        # newly owned by the winner and is the peak of the deposit.
-        weights = np.exp(
-            -np.arange(belt_depth_cells, dtype=np.float64) / decay_cells,
-        )
-        weights /= weights.sum()
 
         # Build per-cell deposit additions to `cleared_thicks[winner]`.
         # We iterate over band offsets (small N — ~15) rather than fold

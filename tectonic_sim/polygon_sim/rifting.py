@@ -73,12 +73,15 @@ def _rift_plate(
             parent.velocity_kmpy[1] - divergence_kmpy * ny,
         ], dtype=np.float64),
         angular_velocity_rad_per_myr=child_omega,
-        # The child inherits the parent's current world-frame pose: its
-        # body frame is the parent's body frame at this instant (we're
-        # snapshotting world arrays as body arrays). Future ticks
-        # advance the child's pose independently.
-        position_km=parent.position_km.copy(),
-        orientation_rad=float(parent.orientation_rad),
+        # The child's body arrays are a WORLD-frame snapshot of its half,
+        # so it spawns at the identity pose (position = pivot = 0,
+        # orientation = 0): world = R(0)·(body − 0) + 0 = the snapshot,
+        # i.e. the child stays exactly where it split off. The next
+        # _recenter_pivots snaps its pivot onto its own centroid.
+        position_km=np.zeros(2, dtype=np.float64),
+        position_carry_km=np.zeros(2, dtype=np.float64),
+        orientation_rad=0.0,
+        body_pivot_km=np.zeros(2, dtype=np.float64),
         body_mask=child_mask_arr.copy(),
         body_crust=child_crust_arr.copy(),
         body_age=child_age_arr.copy(),

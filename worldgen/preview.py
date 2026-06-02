@@ -20,9 +20,6 @@ Layers:
     continentality  Distance to nearest ocean (coastal blue → inland tan).
     gyres           Categorical colouring per gyre id.
     ocean_depth     Bathymetry from the lithosphere column elevation_km.
-
-``render_single_plate`` produces an isolated per-plate footprint; the export
-hook writes one such PNG per plate into the ``plates/`` subfolder.
 """
 
 from __future__ import annotations
@@ -500,116 +497,6 @@ def _render_plates_t0(
     return img
 
 
-def render_single_plate(
-    gen: GeneratedWorld,
-    plate_id: int,
-    hex_px: float = 6.0,
-    margin_hexes: float = 1.5,
-) -> Image.Image:
-    """Render one plate's intrinsic geometry, cropped to its own bounding box.
-
-    The output canvas is sized to fit just this plate's hexes (with
-    ``margin_hexes`` of padding on every side); plate position in the world
-    is irrelevant. ``hex_px`` is the per-hex pixel scale, held constant
-    across plates so side-by-side comparison reveals true relative size.
-
-    The plate's footprint is the set of final-state world hexes assigned
-    to ``plate_id``; each hex carries the crust type it ended up with
-    after the sim. Continental hexes are coloured in the plate's palette
-    colour; oceanic hexes (rift / fresh oceanic crust acquired during
-    the sim) use the darker oceanic variant.
-    """
-    if gen.lithosphere is None:
-        raise ValueError("render_single_plate requires the tectonics step")
-
-    # Source plate metadata from the *simulated* plate set — under
-    # param_temperature randomization the simulated plate count can
-    # diverge from worldgen's t=0 ``PlateField``.
-    plate_by_id = {p.id: p for p in gen.lithosphere.plates}
-    if plate_id not in plate_by_id:
-        raise ValueError(f"plate {plate_id} not in this world")
-    plate = plate_by_id[plate_id]
-    cont_color = _plate_color(plate_id, False)
-    ocn_color = _plate_color(plate_id, True)
-
-    # Collect (axial q, r, crust_type) tuples for the focal plate: world
-    # hexes whose final assignment is this plate, recentered so the
-    # bounding-box centre lands at the canvas centre.
-    cells: list[tuple[int, int, str]] = [
-        (h.q, h.r, gen.lithosphere.columns[h].crust_type)
-        for h in _world_hexes(gen)
-        if gen.lithosphere.plate_id.get(h) == plate_id
-    ]
-    source_note = "final world-state"
-
-    if not cells:
-        # Edge case: a plate with no owned hexes (fully consumed by
-        # subduction, or never assigned). Emit a small placeholder so
-        # downstream code doesn't crash on a zero-size image.
-        img = Image.new("RGB", (120, 40), color=(20, 20, 30))
-        draw = ImageDraw.Draw(img)
-        try:
-            font = ImageFont.truetype("arial.ttf", 11)
-        except OSError:
-            font = ImageFont.load_default()
-        draw.text((6, 12), f"plate #{plate_id}: 0 hexes",
-                  fill=(220, 220, 220), font=font)
-        return img
-
-    # Project axial → flat cartesian (in "hex units": 1 hex ≈ 1 unit wide).
-    def to_xy(q: int, r: int) -> tuple[float, float]:
-        return 1.5 * q, math.sqrt(3.0) * (r + q / 2.0)
-
-    xs_ys = [to_xy(q, r) for q, r, _ in cells]
-    xs = [xy[0] for xy in xs_ys]
-    ys = [xy[1] for xy in xs_ys]
-    min_x, max_x = min(xs), max(xs)
-    min_y, max_y = min(ys), max(ys)
-
-    # Canvas: bbox plus margin, in pixels.
-    w = int(round((max_x - min_x) * hex_px + 2 * margin_hexes * hex_px + 2 * hex_px))
-    h = int(round((max_y - min_y) * hex_px + 2 * margin_hexes * hex_px + 2 * hex_px))
-    # Leave headroom for the caption strip.
-    caption_h = 18
-    img = Image.new("RGB", (w, h + caption_h), color=(20, 20, 30))
-    draw = ImageDraw.Draw(img)
-
-    # Shift origin so the plate sits with margin_hexes padding on the left
-    # and below the caption strip on the top.
-    ox = -min_x * hex_px + margin_hexes * hex_px + hex_px
-    oy = -min_y * hex_px + margin_hexes * hex_px + hex_px + caption_h
-
-    cont_count = 0
-    ocn_count = 0
-    for (q, r, ct), (lx, ly) in zip(cells, xs_ys):
-        px = ox + lx * hex_px
-        py = oy + ly * hex_px
-        if ct == "oceanic":
-            color = ocn_color
-            ocn_count += 1
-        else:
-            color = cont_color
-            cont_count += 1
-        draw.polygon(_hex_corners(px, py, hex_px), fill=color)
-
-    try:
-        font = ImageFont.truetype("arial.ttf", 11)
-    except OSError:
-        font = ImageFont.load_default()
-    # Bounding-box dimensions in km, for size context.
-    hex_size = gen.config.hex_size_km
-    bbox_w_km = (max_x - min_x + 1.0) * hex_size
-    bbox_h_km = (max_y - min_y + 1.0) * hex_size
-    caption = (
-        f"plate #{plate_id} {plate.initial_type}   "
-        f"hexes: {len(cells)} (cont {cont_count} / ocn {ocn_count})   "
-        f"bbox: {bbox_w_km:.0f}×{bbox_h_km:.0f} km   "
-        f"[{source_note}]"
-    )
-    draw.text((6, 3), caption, fill=(230, 230, 230), font=font)
-    return img
-
-
 def _hillshade_tint(h: Hex, gen: GeneratedWorld) -> int:
     """Compute a -40..+40 brightness adjustment from slope toward NW light."""
     if gen.elevation is None or gen.sea is None:
@@ -892,6 +779,18 @@ def _render_continentality(
             f"dry-scale: {gen.config.ocean.continentality_dry_scale_km:.0f} km"
         )
         draw.text((10, 10), caption, fill=(240, 240, 240), font=font)
+
+        def _col_cont(dist: float) -> tuple[int, int, int]:
+            t = min(1.0, dist / ramp_scale)
+            if t < 0.5:
+                s = t / 0.5
+                return (int(70 + 100 * s), int(140 + 50 * s), int(180 - 80 * s))
+            s = (t - 0.5) / 0.5
+            return (int(170 + 50 * s), int(190 - 90 * s), int(100 - 60 * s))
+
+        _draw_colorbar(
+            draw, w, h, 0.0, ramp_scale, _col_cont, "ocean dist (km)", font,
+        )
     return img
 
 
@@ -999,7 +898,58 @@ def _render_ocean_depth(
             f"shallow=cyan abyss=navy"
         )
         draw.text((10, 10), caption, fill=(240, 240, 240), font=font)
+        _draw_colorbar(
+            draw, w, h, 0.0, max_depth,
+            lambda d: _color_ocean_depth(max(0.0, d), max_depth),
+            "depth (km)", font,
+        )
     return img
+
+
+def _draw_colorbar(
+    draw: ImageDraw.ImageDraw,
+    w: int,
+    h: int,
+    vmin: float,
+    vmax: float,
+    color_fn,
+    title: str,
+    font,
+    ticks: list[float] | None = None,
+) -> None:
+    """Vertical colour-scale legend on the right edge.
+
+    Samples ``color_fn(value)`` down a gradient bar (top = ``vmax``,
+    bottom = ``vmin``) so the legend matches the map's colormap exactly,
+    over a dark backing panel for legibility. ``title`` (units) sits
+    above the bar; ``ticks`` (defaults to min / mid / max) get labelled.
+    """
+    if not (vmax > vmin):
+        vmax = vmin + 1.0
+    bar_w = 14
+    bar_h = int(h * 0.5)
+    label_w = 58
+    margin = 8
+    x1 = w - margin - label_w
+    x0 = x1 - bar_w
+    y0 = (h - bar_h) // 2
+    y1 = y0 + bar_h
+    draw.rectangle([x0 - 6, y0 - 20, x1 + label_w, y1 + 6], fill=(18, 18, 26))
+    span = max(y1 - 1 - y0, 1)
+    for py in range(y0, y1):
+        f = (py - y0) / span                 # 0 at top, 1 at bottom
+        v = vmax + (vmin - vmax) * f
+        draw.line([(x0, py), (x1, py)], fill=color_fn(v))
+    draw.rectangle([x0, y0, x1, y1], outline=(235, 235, 235))
+    draw.text((x0, y0 - 16), title, fill=(240, 240, 240), font=font)
+    if ticks is None:
+        ticks = [vmin, 0.5 * (vmin + vmax), vmax]
+    vr = max(vmax - vmin, 1e-9)
+    for tv in ticks:
+        py = int(round(y0 + (vmax - tv) / vr * span))
+        py = min(max(py, y0), y1 - 1)
+        draw.line([(x1, py), (x1 + 5, py)], fill=(235, 235, 235))
+        draw.text((x1 + 8, py - 7), f"{tv:g}", fill=(235, 235, 235), font=font)
 
 
 def _draw_legend(
@@ -1009,7 +959,8 @@ def _draw_legend(
     h: int,
     gen: GeneratedWorld,
 ) -> None:
-    """Draw a small caption and biome legend."""
+    """Draw a caption plus a per-layer legend: a colour-scale bar for the
+    continuous layers, a categorical key for biome."""
     try:
         font = ImageFont.truetype("arial.ttf", 11)
     except OSError:
@@ -1018,6 +969,30 @@ def _draw_legend(
     hex_count = len(_world_hexes(gen))
     caption = f"layer={layer}  {gen.config.world.width_km:g}x{gen.config.world.height_km:g} km  hexes={hex_count}"
     draw.text((10, 10), caption, fill=(220, 220, 220), font=font)
+
+    if layer == "elevation" and gen.elevation is not None:
+        vals = [
+            gen.elevation.elevation[hx] - gen.elevation.sea_level
+            for hx in _world_hexes(gen)
+        ]
+        vmin, vmax = min(vals), max(vals)
+        _draw_colorbar(
+            draw, w, h, vmin, vmax,
+            lambda v: _color_elevation(v, 0.0), "elev (km)", font,
+            ticks=sorted({round(vmin, 2), 0.0, round(vmax, 2)}),
+        )
+    elif layer == "temperature" and gen.climate is not None:
+        vals = list(gen.climate.temperature_c.values())
+        _draw_colorbar(
+            draw, w, h, min(vals), max(vals),
+            _color_temperature, "temp (°C)", font,
+        )
+    elif layer == "precipitation" and gen.climate is not None:
+        vmax = max(gen.climate.precipitation_mm.values(), default=1.0)
+        _draw_colorbar(
+            draw, w, h, 0.0, vmax,
+            _color_precipitation, "precip (mm)", font,
+        )
 
     if layer in ("biome", "composite") and gen.biomes is not None:
         # Bottom-left biome key.

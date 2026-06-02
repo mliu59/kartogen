@@ -57,7 +57,11 @@ warn_unused_configs = true
 packages = ["worldgen", "tectonic_sim"]
 
 [tool.pytest.ini_options]
-# Worldgen tests are temporarily disabled while we focus on tectonic_sim.
-# Re-add ``"tests"`` to this list when we resume worldgen integration
-# (Phases 11–13 — bridge, cutover, preview delegation).
-testpaths = ["tectonic_sim/tests"]
+testpaths = ["tectonic_sim/tests", "tests"]
+markers = [
+    # Integration tests that drive a full `generate()` / 100-tick tectonic
+    # sim (or the session world fixtures) — seconds each. Skip during quick
+    # iteration with `pytest -m "not slow"`; run the full suite (incl. slow)
+    # before committing.
+    "slow: end-to-end pipeline/sim test (deselect with -m 'not slow')",
+]

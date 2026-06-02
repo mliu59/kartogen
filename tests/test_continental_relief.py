@@ -12,7 +12,6 @@ from dataclasses import replace
 
 import numpy as np
 import pytest
-
 from tectonic_sim.config_loader import load_sim_config_from_path
 from tectonic_sim.polygon_sim.seeding import _initial_state
 from tectonic_sim.types import CRUST_CONTINENTAL, WorldRect

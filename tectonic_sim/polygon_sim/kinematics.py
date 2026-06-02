@@ -22,22 +22,147 @@ from tectonic_sim.types import WorldRect
 from tectonic_sim.polygon_sim.types import PolygonPlate
 
 
+def _mask_centroid_km(
+    mask: np.ndarray, domain: WorldRect, gy: int, gx: int, cell_km: float,
+    snap: bool = True,
+) -> tuple[float, float] | None:
+    """Torus-aware centroid of a body/world cell mask, in km.
+
+    Uses the **trigonometric (circular) mean** per axis: each cell
+    coordinate is mapped to an angle on the periodic axis, the mean of
+    the unit vectors is taken, and ``atan2`` recovers the mean angle.
+    Unlike the reference-cell wrapped-delta construction, this has *no*
+    dependence on an arbitrary reference point, so it returns the
+    correct centroid even for a coherent plate that straddles the seam
+    (the failure case where a badly-placed reference biases the simple
+    wrapped-delta average). The axis periods are the domain extents, so
+    the centroid lives on the same torus as ``position_km``.
+
+    ``snap`` rounds the result to integer cell multiples (used for the
+    rotation pivot, which must stay cell-aligned). Returns ``None`` for
+    an empty mask. (A fully seam-spread mask has a near-zero mean-vector
+    magnitude and an ill-defined centroid, but real plates are coherent
+    clusters where the circular mean is well-conditioned.)
+    """
+    ys, xs = np.where(mask)
+    if ys.size == 0:
+        return None
+    half_w = 0.5 * gx * cell_km
+    half_h = 0.5 * gy * cell_km
+    c_kx = (xs + 0.5) * cell_km - half_w
+    c_ky = (ys + 0.5) * cell_km - half_h
+
+    two_pi = 2.0 * np.pi
+    wx = domain.width_km
+    wy = domain.height_km
+    theta_x = (c_kx + domain.half_width_km) * (two_pi / wx)
+    theta_y = (c_ky + domain.half_height_km) * (two_pi / wy)
+    mean_tx = float(np.arctan2(np.sin(theta_x).mean(), np.cos(theta_x).mean()))
+    mean_ty = float(np.arctan2(np.sin(theta_y).mean(), np.cos(theta_y).mean()))
+    cent_x = (mean_tx % two_pi) * (wx / two_pi) - domain.half_width_km
+    cent_y = (mean_ty % two_pi) * (wy / two_pi) - domain.half_height_km
+
+    if snap:
+        # Snap to integer cell multiples so the rotation pivot is
+        # cell-aligned, then re-wrap onto the centred torus.
+        cent_x = round(cent_x / cell_km) * cell_km
+        cent_y = round(cent_y / cell_km) * cell_km
+        cent_x = (cent_x + domain.half_width_km) % wx - domain.half_width_km
+        cent_y = (cent_y + domain.half_height_km) % wy - domain.half_height_km
+    return cent_x, cent_y
+
+
+def _recenter_pivots(
+    plates: list[PolygonPlate], domain: WorldRect,
+    gy: int, gx: int, cell_km: float,
+) -> None:
+    """Move each plate's rotation pivot onto its current body centroid,
+    adjusting ``position_km`` so the world configuration is unchanged.
+
+    The plate spins about ``body_pivot_km`` (in the body frame), which
+    maps to ``position_km`` (in the world). As the plate deforms
+    (accretion, fold belts, fusion, contention clears) its body centroid
+    migrates away from the pivot, so the spin axis drifts off-centre and
+    the world→body wrap discontinuity can creep toward the plate. This
+    step re-snaps the pivot to the centroid.
+
+    World-preserving update: with ``world = R(θ)·(body − pivot) +
+    position`` held fixed across a pivot change ``pivot → pivot'``::
+
+        position' = position + R(θ)·(pivot' − pivot)
+
+    so the same body cells stay at the same world cells — only the pivot
+    label changes. Exact (pose-only arithmetic, no array resampling).
+    """
+    for p in plates:
+        if not p.alive or not p.body_mask.any():
+            continue
+        c = _mask_centroid_km(p.body_mask, domain, gy, gx, cell_km)
+        if c is None:
+            continue
+        dqx, dqy = domain.wrapped_delta_xy(
+            c[0] - float(p.body_pivot_km[0]),
+            c[1] - float(p.body_pivot_km[1]),
+        )
+        if abs(dqx) < 1e-9 and abs(dqy) < 1e-9:
+            continue
+        cos_t = float(np.cos(p.orientation_rad))
+        sin_t = float(np.sin(p.orientation_rad))
+        # World shift = R(θ) · (pivot' − pivot).
+        wsx = cos_t * dqx - sin_t * dqy
+        wsy = sin_t * dqx + cos_t * dqy
+        new_px = (
+            (float(p.position_km[0]) + wsx + domain.half_width_km)
+            % domain.width_km - domain.half_width_km
+        )
+        new_py = (
+            (float(p.position_km[1]) + wsy + domain.half_height_km)
+            % domain.height_km - domain.half_height_km
+        )
+        p.position_km = np.array([new_px, new_py], dtype=np.float64)
+        p.body_pivot_km = np.array([c[0], c[1]], dtype=np.float64)
+
+
 def _advance_pose(
-    plates: list[PolygonPlate], dt: float, domain: WorldRect,
+    plates: list[PolygonPlate], dt: float, domain: WorldRect, cell_km: float,
 ) -> None:
     """Advance each plate's continuous pose by one tick.
 
-    Translation: ``position_km += velocity_kmpy * dt``, wrapped to the
-    torus so the position stays in the centred ``[-half, +half]`` range.
+    Translation is accumulated in ``position_carry_km`` and **flushed
+    in integer-cell quanta** to ``position_km``. This is essential for
+    the rasterise/derasterise round-trip to be exact: with a sub-cell
+    position offset, ``floor((bx + half) / cell_km)`` produces
+    different cell indices on the forward and inverse passes,
+    silently shifting mass by 1 cell per tick and creating fragment
+    artefacts at the seams. Snapping to integer-cell positions
+    eliminates that asymmetry.
+
     Rotation: ``orientation_rad += angular_velocity_rad_per_myr * dt``.
+    Rotation still has a sub-cell quantisation error at non-axis-aligned
+    angles, but the error is bounded and doesn't compound the way
+    translational sub-cell error did.
     """
     half_w = domain.half_width_km
     half_h = domain.half_height_km
     for p in plates:
         if not p.alive:
             continue
-        p.position_km = p.position_km + p.velocity_kmpy * dt
-        # Wrap into the centred torus.
+        # Add this tick's continuous displacement into the carry.
+        p.position_carry_km = p.position_carry_km + p.velocity_kmpy * dt
+        # Flush integer-cell shifts: how many full cells does the carry
+        # currently represent?
+        n_x = int(round(float(p.position_carry_km[0]) / cell_km))
+        n_y = int(round(float(p.position_carry_km[1]) / cell_km))
+        if n_x != 0 or n_y != 0:
+            shift_x = n_x * cell_km
+            shift_y = n_y * cell_km
+            p.position_km = p.position_km + np.array(
+                [shift_x, shift_y], dtype=np.float64,
+            )
+            p.position_carry_km = p.position_carry_km - np.array(
+                [shift_x, shift_y], dtype=np.float64,
+            )
+        # Wrap snapped position into the centred torus.
         p.position_km[0] = (
             (p.position_km[0] + half_w) % domain.width_km - half_w
         )

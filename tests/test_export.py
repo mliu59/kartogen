@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from worldgen import (
     GeneratedWorld,
     WorldgenConfig,
@@ -16,7 +17,7 @@ from worldgen import (
     serialize_world,
 )
 
-
+pytestmark = pytest.mark.slow  # full generate()/sim per test
 def test_serialize_returns_generic_container(small_world: GeneratedWorld) -> None:
     """All WorldSnapshot fields are open-ended dicts / list of dicts so new
     per-hex fields and new layers can be added without changing the container.
@@ -115,6 +116,6 @@ def test_export_world_creates_folder_with_snapshot_and_layer_pngs(
     assert layers_dir.is_dir()
     expected_layers = {
         "elevation.png", "temperature.png", "precipitation.png",
-        "flow.png", "biome.png", "composite.png", "plates.png",
+        "flow.png", "biome.png", "composite.png",
     }
     assert expected_layers.issubset({p.name for p in layers_dir.iterdir()})

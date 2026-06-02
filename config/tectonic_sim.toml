@@ -3,7 +3,7 @@
 #
 # This file is consumed by the standalone `tectonic_sim` module. It knows
 # nothing about hex grids, climate, or worldgen — every parameter here is
-# a knob on the continuous-2D particle-cloud plate tectonics simulation.
+# a knob on the rigid-polygon, cell-grid plate tectonics simulation.
 #
 # Worldgen references this file via the `tectonic_sim_config` key in
 # config/worldgen.toml; the sim runs on the same world rectangle the
@@ -19,10 +19,11 @@ motion_speed_kmpy = 20.0
 # centre, <0 prefers the edges. Mild values (±0.3) are usually enough.
 seed_radial_bias = 0.0
 
-# --- Initial particle layout ---
-# Bridson Poisson-disc target separation. Average particle density works
-# out to ~1 / (π · s² / 4); at 15 km that's ~5,700 particles for a
-# 1,000×1,000 km world. Smaller spacing → finer boundaries, higher cost.
+# --- Plate-seed separation ---
+# Minimum-separation hint for plate seed placement (km). Kept under the
+# legacy name `particle_spacing_km` for TOML stability; the polygon sim
+# has no particles — `seeding._plate_seed_min_separation_km` uses this as
+# a floor on how close two plate seeds may be placed.
 particle_spacing_km = 15.0
 
 # --- Sim duration ---
@@ -31,7 +32,7 @@ dt_myr = 2.0
 
 # --- Initial crust thicknesses (km) ---
 continental_thickness_km = 35.0
-oceanic_thickness_km = 7.0
+oceanic_thickness_km = 9.0
 # Thinned continental crust spawned at a divergent gap whose nearest
 # plate is itself continental — produces rift-valley basins (East-
 # African-Rift / Dead-Sea analogue) rather than fresh oceanic floor.
@@ -42,7 +43,7 @@ rift_thickness_km = 33.0
 # Earth-like: ridge ≈ 2.5 km, rate ≈ 0.35 km/√Myr, abyssal plain ≈ 6 km.
 ridge_depth_km = 2.5
 ridge_subsidence_rate = 0.35
-max_ocean_depth_km = 6.0
+max_ocean_depth_km = 4.0
 
 # --- Continental isostasy ---
 # elevation_km = (thickness - reference) · isostasy_factor
@@ -54,36 +55,40 @@ continental_isostasy_factor = 0.15
 sea_level_km = 0.0
 
 # --- Collision ---
-# NOTE: the cross-plate detection radius is NOT a config knob — it is
-# hardcoded to 1.5 × particle_spacing_km (see types.OVERLAP_RADIUS_MULTIPLIER).
-# Bridson Poisson-disc guarantees adjacent particles are at least
-# particle_spacing_km apart, so anything below that would detect zero
-# pairs by construction; 1.5× catches the immediate-neighbour rank along
-# each Voronoi boundary.
-orogeny_uplift_per_overlap_km = 0.08      # cc-collision thickening per tick
-# Reconciled to 0.5 to match the rigid-polygon prototype (was 0.05). Real
-# C-C continental collisions transfer a large fraction of the underthrusting
-# slab's column into the overrider over each tick of contact; the 10× lower
-# value was too gentle to build Himalayan-scale orogenies in the run window.
-folding_ratio = 0.5                       # mass transferred from smaller to larger
-folding_displacement_km = 1.5             # lower particle's drift toward the higher
-subduction_arc_uplift_km = 0.04           # oc/oo-collision thickening on the survivor
+# Fraction of the underthrusting (loser) plate's crust column transferred
+# into the over-rider per C-C fold event, deposited inland across the
+# fold belt below. Sum with folding_loser_side_ratio must stay <= 1 (the
+# remainder is subducted to mantle).
+folding_ratio = 0.3
 
-# --- C-C fold-and-thrust belt ---
+# --- C-C fold-and-thrust belt (over-rider side) ---
 # When two continental plates collide, the over-rider's crust thickens
 # across a wide *belt* extending inland from the suture, not just at the
-# contact cell. Per fold event, the mass `folding_ratio · loser_thick`
+# contact cell. Per fold event the mass `folding_ratio · loser_thick`
 # is distributed across cells extending up to `folding_belt_depth_km`
-# inland (opposite the over-rider's velocity), with weights decaying
-# exponentially with e-folding scale `folding_belt_decay_km`. The
-# integral of weights is normalized so total mass is conserved.
+# inland (opposite the over-rider's velocity) using a HYBRID PLATEAU
+# profile rather than an exponential spike at the suture:
 #
-# 120 km / 35 km matches the rough geometry of the Himalaya-Tibet
-# orogen: dramatic uplift in the first ~40 km, broad high plateau out
-# to ~120 km, residual thickening fading beyond. Set depth = 0 to fall
-# back to the legacy single-suture-cell deposit (very tall, very thin).
-folding_belt_depth_km = 120.0
-folding_belt_decay_km = 35.0
+#   suture ──ramp──► ▔▔▔ plateau ▔▔▔ ──taper──► 0
+#
+#   - low at the suture (the suture is a structural low in real orogens),
+#   - a smooth half-cosine RISE over `folding_belt_ramp_km`,
+#   - a broad FLAT plateau across the middle (the bulk of the belt),
+#   - a cosine TAPER to zero over `folding_belt_taper_km` at the far edge.
+#
+# Weights are normalised to sum to 1, so total deposited mass is exactly
+# `folding_ratio · loser_thick` whatever the shape — only the spatial
+# spread changes. This matches a mature double-vergent orogen (Tibet /
+# Altiplano): a broad high plateau set back from the collision front,
+# not a sharp peak at the suture.
+#
+#   depth 200 / ramp 40 / taper 60  →  ~100 km flat plateau, broad spread.
+#
+# Degenerate cases: ramp + taper >= depth collapses the plateau to zero
+# (a smooth inland-peaked bump); ramp = taper = 0 gives a flat top-hat.
+folding_belt_depth_km = 200.0
+folding_belt_ramp_km = 40.0
+folding_belt_taper_km = 60.0
 
 # --- Loser-side C-C fold belt (Himalayan foothill / Lesser-Himalaya analogue) ---
 # Mirror-image deposit on the *down-going* plate's near-suture
@@ -100,8 +105,9 @@ folding_belt_decay_km = 35.0
 # Sum of the two ratios should stay ≤ 1 (else mass is created).
 #
 # Defaults: 0.2 ratio, 50 km depth, 15 km decay — produces a sharp
-# ridge that decays within ~50 km, distinct from the broader 120 km
-# Tibet-style plateau on the other side of the suture.
+# ridge that decays within ~50 km, distinct from the broader
+# (folding_belt_depth_km, currently 200 km) Tibet-style plateau on the
+# over-rider side of the suture.
 folding_loser_side_ratio = 0.2
 folding_belt_loser_depth_km = 50.0
 folding_belt_loser_decay_km = 15.0
@@ -112,6 +118,16 @@ folding_belt_loser_decay_km = 15.0
 # (1 - velocity_damping_strength × fraction). Energy dissipated this
 # way goes implicitly into thickening via the folding term.
 velocity_damping_strength = 0.1
+# Extra damping for the continental–continental share of that contested
+# fraction. The C-C portion of a plate's contested cells is damped by
+# `velocity_damping_strength × cc_velocity_damping_multiplier` instead
+# of the base strength, so two colliding continents arrest their
+# convergence much faster than C-O/O-O contacts. This stops a large
+# plate from over-riding and annihilating a smaller continent over many
+# ticks (which dumps the whole loser column into the winner as fold
+# mass and builds unrealistic runaway peaks). 1.0 disables the extra
+# C-C damping; 4.0 means the C-C overlap fraction bites 4× harder.
+cc_velocity_damping_multiplier = 10.0
 
 # --- Erosion ---
 # Every N ticks, blend each particle's thickness toward its k-NN same-plate
@@ -126,6 +142,18 @@ erosion_strength = 0.05
 # the sim itself, so the default 5 trades visual smoothness for ~5x
 # fewer encoded frames. Set to 1 for the smoothest drift GIF.
 snapshot_period_ticks = 5
+
+# --- Rotation-pivot recentering ---
+# How often (ticks) to re-snap each plate's rotation pivot onto its
+# current body centroid. Plates rotate about their pivot; as a plate
+# deforms (accretion, fold belts, fusion, contention) its centroid
+# migrates, so the pivot is periodically re-anchored — world-preserving,
+# only the pivot label moves. Keeps plates spinning about their own
+# centre of area instead of drifting off-axis, and keeps the world→body
+# wrap seam at the centroid's antipode (outside the plate). 1 = every
+# tick; larger = cheaper, pivot lags slightly between recenters; 0
+# disables.
+recenter_period_ticks = 5
 
 
 # =========================================================================
@@ -181,6 +209,22 @@ fusion_overlap_threshold = 0.1
 # subduct rather than weld. Set false to allow microcontinent docking
 # regardless of crust type.
 fusion_both_continental_only = true
+# Suturing velocity gate (km/Myr). A pair welds into one plate only
+# once momentum exchange has brought their contact-normal relative
+# velocity down to at or below this — i.e. they've stopped ramming
+# together and are travelling as one. This couples fusion to the
+# physics: momentum drives convergence → relative velocity → ~0 →
+# suture, instead of fusing the instant masks happen to overlap.
+#
+# Scale reference: with the domain-derived motion cap (~5 km/Myr here)
+# a head-on pair starts at up to ~10 km/Myr relative; inelastic
+# momentum exchange (restitution 0, contact boost 5) collapses the
+# normal component to near zero within a tick or two of solid contact.
+# 1.5 km/Myr = "convergence essentially arrested". Raise toward the
+# motion cap to weld more eagerly; lower toward 0 to require a near-
+# perfect lock. Pairs already separating (negative relative velocity)
+# always pass this gate — they're locked and drifting together.
+fusion_max_relative_velocity_kmpy = 3.0
 
 # --- Continental arc accretion (C-O magmatism) ---
 # Per-tick probability that each C-O boundary particle triggers an arc-
@@ -200,7 +244,7 @@ accretion_inland_offset_max_km = 41.0
 
 # --- Rifting (probabilistic plate splits) ---
 # Per-tick probability of a rift event. When fires, picks the largest
-# eligible plate (>= rift_min_plate_particles) and splits it into two
+# eligible plate (>= rift_min_plate_cells) and splits it into two
 # halves with diverging velocities. 0 disables rifting entirely.
 # DISABLED for now while the continuous-pose architecture beds in —
 # rift splits interact awkwardly with the body-frame state in the
@@ -260,14 +304,21 @@ translation_speed_ratio = 0.5
 # --- Fragment culling ---
 # Connected components >= this many cells spawn as a new plate; smaller
 # fragments redistribute to a neighbour (continental-only).
-fragment_spawn_threshold = 16
+#
+# Raised from 16 to 150 to suppress the NN-aliasing fragment bursts at
+# seam crossings and rotated boundaries. With the continuous-pose
+# architecture, the body↔world NN sampling sporadically drops 1-cell
+# boundary pieces under rotation; without this raise those would each
+# spawn as new tiny plates. Real plate fragments large enough to matter
+# (sliver continents, microplates) are still well above 150 cells —
+# ~10° × 100 km diameter at 8 km/cell. Adjust upward to suppress more,
+# downward to allow finer fragmentation.
+fragment_spawn_threshold = 30
 
 # --- Alpha-complex polygon extraction ---
-# Circumradius cutoff = alpha_factor × cell_km. init_alpha_factor is
-# used at t=0 (slightly more permissive to avoid over-trimming initial
-# convex hulls before any drift); alpha_factor applies per-tick.
+# Circumradius cutoff = alpha_factor × cell_km, applied when extracting
+# plate outline polygons for rendering.
 alpha_factor = 1.8
-init_alpha_factor = 2.0
 
 # --- Contention resolution ---
 # Continental cells get this multiplier in the per-cell priority score.
@@ -286,6 +337,27 @@ max_buoyancy_age_myr = 80.0
 # over-rider via thickness transfer to a same-plate neighbour, and the
 # cell reverts to oceanic. 0 disables.
 min_continental_thickness_km = 10.0
+
+# --- Divergent-gap fill: continental-basin override ---
+# When `_trailing_edge_fill` finds a connected gap whose immediate
+# surround is mostly continental, fill the component as a continental
+# basin instead of fresh oceanic ridge. Captures the C-C suture
+# interior — material plastered into the gap is continental, not
+# oceanic. Components below the threshold still fill as oceanic.
+#
+#   divergent_fill_continental_threshold — fraction of the surround's
+#     classified (continental + oceanic) cells that must be continental.
+#     0.8 = strict: most of the surround must be continental, so coastal
+#     pockets where ~half the surround is open ocean still fill oceanic.
+#     1.0 disables the override entirely (always-oceanic).
+#
+#   divergent_fill_basin_depth_km — basin floor sits this many km
+#     thinner than the mean continental thickness of the surround.
+#     Per-component scalar (same thickness across the whole basin).
+#     Clamped at min_continental_thickness_km. Set to 0 for "fill at
+#     surround mean" (no basin recess).
+divergent_fill_continental_threshold = 0.8
+divergent_fill_basin_depth_km = 5.0
 
 # --- Naturalised Voronoi (Methods 1+2) ---
 # Domain-warp displacement of cell positions before nearest-seed lookup,
@@ -308,7 +380,7 @@ voronoi_weight_scale_km = 60.0
 # continental/oceanic thickness gets scaled by exp(N(0, sigma)). 0
 # disables. Knob for plate-to-plate "this continent is thicker on
 # average than that one" variability.
-init_thickness_per_plate_sigma = 0.10
+init_thickness_per_plate_sigma = 0.05
 
 # --- Continental relief (Perlin fBm "ancient basement topography") ---
 # Per-cell zero-mean perturbation in physical km, applied only to
@@ -336,7 +408,7 @@ init_thickness_per_plate_sigma = 0.10
 #
 # 0 amplitude disables the feature entirely (flat continental interiors).
 continental_relief_amplitude_km = 10.0
-continental_relief_wavelength_km = 1000.0
+continental_relief_wavelength_km = 1500.0
 continental_relief_octaves = 4
 continental_relief_persistence = 0.5
 
@@ -373,7 +445,7 @@ edge_smoothing_apply_t0 = true
 edge_smoothing_apply_tfinal = true
 edge_smoothing_kernel_km = 25.0
 edge_smoothing_alpha_min = 0.0
-edge_smoothing_alpha_max = 0.5
+edge_smoothing_alpha_max = 0.7
 edge_smoothing_noise_wavelength_km = 600.0
 edge_smoothing_noise_octaves = 3
 edge_smoothing_noise_persistence = 0.5

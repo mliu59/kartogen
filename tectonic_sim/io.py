@@ -82,14 +82,6 @@ class SimState:
     edge_smoothing_alpha_t0: np.ndarray
     edge_smoothing_alpha_tfinal: np.ndarray
 
-    @property
-    def gy(self) -> int:
-        return int(self.owner.shape[0])
-
-    @property
-    def gx(self) -> int:
-        return int(self.owner.shape[1])
-
     def elevation_km(
         self,
         crust: np.ndarray,

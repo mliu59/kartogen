@@ -236,20 +236,21 @@ def _spawn_from_component(
         -sim_config.init_angular_velocity_max_rad_per_myr * 0.5,
         sim_config.init_angular_velocity_max_rad_per_myr * 0.5))
 
-    # Inherit pose from the dominant parent so the spawned fragment
-    # starts in the same world-frame neighbourhood.
-    if parent is not None:
-        parent_pos = parent.position_km.copy()
-        parent_orient = float(parent.orientation_rad)
-    else:
-        parent_pos = np.zeros(2, dtype=np.float64)
-        parent_orient = 0.0
+    # ``new_mask`` is in WORLD coordinates (the released component as it
+    # sits in the world). Spawn at the identity pose (position = pivot =
+    # 0, orientation = 0) so that ``world = R(0)·(body − 0) + 0 = new_mask``
+    # exactly — the fragment stays where it was released, no teleport.
+    # The next ``_recenter_pivots`` snaps the pivot onto the fragment's
+    # own centroid (world-preserving), after which it spins about its
+    # own centre like any other plate.
     new_plate = PolygonPlate(
         pid=new_pid,
         velocity_kmpy=np.array([new_vx, new_vy], dtype=np.float64),
         angular_velocity_rad_per_myr=new_omega,
-        position_km=parent_pos,
-        orientation_rad=parent_orient,
+        position_km=np.zeros(2, dtype=np.float64),
+        position_carry_km=np.zeros(2, dtype=np.float64),
+        orientation_rad=0.0,
+        body_pivot_km=np.zeros(2, dtype=np.float64),
         body_mask=new_mask.copy(),
         body_crust=new_crust.copy(),
         body_age=new_age.copy(),
