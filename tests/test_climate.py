@@ -5,13 +5,13 @@ from __future__ import annotations
 import statistics
 
 import pytest
-from worldgen.pipeline import GeneratedWorld
+from kartogen.pipeline import GeneratedWorld
 
 pytestmark = pytest.mark.slow  # full generate()/sim per test
 def test_temperature_decreases_toward_poles(medium_world: GeneratedWorld) -> None:
     """Annual mean temperature should be coldest at high latitude and warmest near the equator."""
-    from worldgen.climate import hex_latitude_deg
-    from worldgen.world import map_half_extents_km
+    from kartogen.climate import hex_latitude_deg
+    from kartogen.world import map_half_extents_km
     cfg = medium_world.config
     _, half_h = map_half_extents_km(medium_world.hexes.keys(), cfg.hex_size_km)
     by_lat: dict[int, list[float]] = {}

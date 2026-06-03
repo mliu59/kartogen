@@ -5,12 +5,12 @@ from __future__ import annotations
 
 import heapq
 
-from worldgen.hex import Hex
-from worldgen.types import (
+from kartogen.hex import Hex
+from kartogen.types import (
     ElevationLayer,
     HydrologyLayer,
     SeaLayer,
-    WorldgenConfig,
+    KartogenConfig,
 )
 
 
@@ -87,7 +87,7 @@ def compute(
     elevation: ElevationLayer,
     sea: SeaLayer,
     precipitation: dict[Hex, float],
-    config: WorldgenConfig,
+    config: KartogenConfig,
 ) -> HydrologyLayer:
     """Compute flow directions, flow accumulation, rivers and lakes.
 

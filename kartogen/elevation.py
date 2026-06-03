@@ -17,12 +17,12 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable
 
-from worldgen._log import progress
-from worldgen.rng import RngHierarchy
-from worldgen.hex import Hex
+from kartogen._log import progress
+from kartogen.rng import RngHierarchy
+from kartogen.hex import Hex
 from tectonic_sim.noise import PerlinNoise2D, fbm, ridged_fbm
-from worldgen.tectonics import LithosphereState
-from worldgen.types import ElevationLayer, WorldgenConfig
+from kartogen.tectonics import LithosphereState
+from kartogen.types import ElevationLayer, KartogenConfig
 
 
 def _hex_to_xy(h: Hex) -> tuple[float, float]:
@@ -38,7 +38,7 @@ def _hex_to_xy(h: Hex) -> tuple[float, float]:
 
 def compute(
     hexes: Iterable[Hex],
-    config: WorldgenConfig,
+    config: KartogenConfig,
     rng: RngHierarchy,
     lithosphere: LithosphereState,
 ) -> ElevationLayer:
@@ -49,10 +49,10 @@ def compute(
     ``max_elevation_km`` so peaks sit near +1 and abyssal floors near -1.
     Noise is then blended in via ``tectonic_blend_weight``.
     """
-    noise_base = PerlinNoise2D.from_rng(rng.child("worldgen", "elevation", "base"))
-    noise_ridge = PerlinNoise2D.from_rng(rng.child("worldgen", "elevation", "ridge"))
-    noise_warp_x = PerlinNoise2D.from_rng(rng.child("worldgen", "elevation", "warp_x"))
-    noise_warp_y = PerlinNoise2D.from_rng(rng.child("worldgen", "elevation", "warp_y"))
+    noise_base = PerlinNoise2D.from_rng(rng.child("kartogen", "elevation", "base"))
+    noise_ridge = PerlinNoise2D.from_rng(rng.child("kartogen", "elevation", "ridge"))
+    noise_warp_x = PerlinNoise2D.from_rng(rng.child("kartogen", "elevation", "warp_x"))
+    noise_warp_y = PerlinNoise2D.from_rng(rng.child("kartogen", "elevation", "warp_y"))
 
     sea_level_km = config.tectonics.sea_level_km
     blend = config.tectonic_blend_weight

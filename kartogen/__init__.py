@@ -13,21 +13,21 @@ Each layer is a pure function of (prior_state, seeded_rng, config). Layers:
 The entry point is ``pipeline.generate(config, seed) -> GeneratedWorld``.
 """
 
-from worldgen.export import (
+from kartogen.export import (
     WorldSnapshot,
     export_world,
     load_snapshot,
     save_snapshot,
     serialize_world,
 )
-from worldgen.pipeline import GeneratedWorld, generate
-from worldgen.types import HexData, WorldgenConfig
+from kartogen.pipeline import GeneratedWorld, generate
+from kartogen.types import HexData, KartogenConfig
 
 __all__ = [
     "GeneratedWorld",
     "HexData",
     "WorldSnapshot",
-    "WorldgenConfig",
+    "KartogenConfig",
     "export_world",
     "generate",
     "load_snapshot",

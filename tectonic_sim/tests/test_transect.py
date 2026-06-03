@@ -2,7 +2,7 @@
 
 Builds a synthetic raw_snapshot dict by hand (3 plates on a 40x30 cell
 grid, deterministic) so the tests don't depend on running the full
-polygon sim. The shape and dtypes match what worldgen builds in
+polygon sim. The shape and dtypes match what kartogen builds in
 ``tectonics_cast.simulate_tectonics_via_continuous_sim``.
 """
 

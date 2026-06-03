@@ -12,13 +12,13 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from worldgen import export_world
-from worldgen.types import WorldgenConfig, WorldShape
+from kartogen import export_world
+from kartogen.types import KartogenConfig, WorldShape
 
 pytestmark = pytest.mark.slow  # full generate()/sim per test
 def _cfg_with_snapshots(
-    base: WorldgenConfig, period: int, side_km: float = 100.0,
-) -> WorldgenConfig:
+    base: KartogenConfig, period: int, side_km: float = 100.0,
+) -> KartogenConfig:
     """Shrink the world to a ``side_km × side_km`` square for fast drift
     tests and apply the requested snapshot period."""
     return replace(
@@ -29,12 +29,12 @@ def _cfg_with_snapshots(
 
 
 def test_export_world_writes_drift_gif(
-    default_worldgen_config: WorldgenConfig,
+    default_kartogen_config: KartogenConfig,
     tmp_path: Path,
 ) -> None:
     """When snapshots are captured, export_world emits drift.gif inside
     ``tectonic_sim_views/`` alongside the static layer PNGs."""
-    cfg = _cfg_with_snapshots(default_worldgen_config, period=25)
+    cfg = _cfg_with_snapshots(default_kartogen_config, period=25)
     folder = export_world(
         config=cfg, seed=42, output_root=tmp_path,
     )
@@ -44,11 +44,11 @@ def test_export_world_writes_drift_gif(
 
 
 def test_export_world_skips_drift_when_disabled(
-    default_worldgen_config: WorldgenConfig,
+    default_kartogen_config: KartogenConfig,
     tmp_path: Path,
 ) -> None:
     """No snapshots → no drift.gif emitted."""
-    cfg = _cfg_with_snapshots(default_worldgen_config, period=0)
+    cfg = _cfg_with_snapshots(default_kartogen_config, period=0)
     folder = export_world(
         config=cfg, seed=42, output_root=tmp_path,
     )

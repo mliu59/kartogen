@@ -29,9 +29,9 @@ import math
 from collections import deque
 from dataclasses import dataclass
 
-from worldgen.hex import Hex
-from worldgen.types import SeaLayer, WorldgenConfig
-from worldgen.world import hex_to_xy_km, map_half_extents_km
+from kartogen.hex import Hex
+from kartogen.types import SeaLayer, KartogenConfig
+from kartogen.world import hex_to_xy_km, map_half_extents_km
 
 
 _SQRT3 = math.sqrt(3.0)
@@ -67,7 +67,7 @@ class OceanLayer:
 
 
 def _hex_latitude_deg(
-    h: Hex, half_height_km: float, config: WorldgenConfig,
+    h: Hex, half_height_km: float, config: KartogenConfig,
 ) -> float:
     """Same convention as ``climate.hex_latitude_deg`` — kept duplicated to
     avoid pulling the climate module into this layer's import graph.
@@ -83,7 +83,7 @@ def _hex_latitude_deg(
     )
 
 
-def _lat_baseline_temp(lat_deg: float, config: WorldgenConfig) -> float:
+def _lat_baseline_temp(lat_deg: float, config: KartogenConfig) -> float:
     """Planet's annual-mean temperature at the given latitude.
 
     Mirrors ``climate.compute_temperature``'s latitudinal formula so the
@@ -126,7 +126,7 @@ def _connected_ocean_basins(
 def _split_basins_into_gyres(
     basins: list[list[Hex]],
     half_height_km: float,
-    config: WorldgenConfig,
+    config: KartogenConfig,
     hex_size_km: float,
 ) -> list[tuple[list[Hex], tuple[float, float], int]]:
     """For each basin, split by hemisphere (lat 0°) into 1–2 gyres.
@@ -224,7 +224,7 @@ def _compute_current_anomaly(
     h: Hex,
     direction: tuple[float, float],
     half_height_km: float,
-    config: WorldgenConfig,
+    config: KartogenConfig,
     hex_size_km: float,
     persistence_km: float,
     strength: float,
@@ -287,7 +287,7 @@ def _bfs_distance_to_ocean(
 def compute(
     sea: SeaLayer,
     hexes: list[Hex],
-    config: WorldgenConfig,
+    config: KartogenConfig,
 ) -> OceanLayer:
     """Build the OceanLayer.
 

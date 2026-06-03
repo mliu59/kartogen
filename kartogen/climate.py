@@ -15,24 +15,24 @@ from __future__ import annotations
 import math
 from collections import deque
 
-from worldgen._log import progress
-from worldgen.rng import RngHierarchy
-from worldgen.hex import Hex
+from kartogen._log import progress
+from kartogen.rng import RngHierarchy
+from kartogen.hex import Hex
 from tectonic_sim.noise import PerlinNoise2D
-from worldgen.ocean import OceanLayer
-from worldgen.types import (
+from kartogen.ocean import OceanLayer
+from kartogen.types import (
     ClimateLayer,
     ElevationLayer,
     SeaLayer,
-    WorldgenConfig,
+    KartogenConfig,
 )
-from worldgen.world import map_half_extents_km
+from kartogen.world import map_half_extents_km
 
 _SQRT3 = math.sqrt(3.0)
 
 
 def hex_latitude_deg(
-    h: Hex, half_height_km: float, config: WorldgenConfig,
+    h: Hex, half_height_km: float, config: KartogenConfig,
 ) -> float:
     """Geographic latitude (degrees) the hex occupies on the planet.
 
@@ -63,7 +63,7 @@ def compute_temperature(
     sea: SeaLayer,
     ocean: OceanLayer,
     half_height_km: float,
-    config: WorldgenConfig,
+    config: KartogenConfig,
     rng: RngHierarchy,
 ) -> dict[Hex, float]:
     """Per-hex annual mean temperature in °C.
@@ -76,7 +76,7 @@ def compute_temperature(
     warm western-boundary currents push the adjacent coastline above the
     pure-latitude baseline, cold eastern-boundary currents push it below.
     """
-    temp_noise = PerlinNoise2D.from_rng(rng.child("worldgen", "climate", "temp_noise"))
+    temp_noise = PerlinNoise2D.from_rng(rng.child("kartogen", "climate", "temp_noise"))
     eq = config.equator_temp_c
     pole = config.polar_temp_c
 
@@ -191,7 +191,7 @@ def _axial_step_for_theta(theta: float) -> tuple[float, float]:
 def _compute_sea_breeze_field(
     elevation: ElevationLayer,
     sea: SeaLayer,
-    config: WorldgenConfig,
+    config: KartogenConfig,
 ) -> dict[Hex, tuple[float, float, float]]:
     """For each land hex, return (onshore_x, onshore_y, strength).
 
@@ -259,7 +259,7 @@ def _per_hex_wind_theta(
     half_height_km: float,
     sea_breeze_field: dict[Hex, tuple[float, float, float]],
     jitter_noise: PerlinNoise2D,
-    config: WorldgenConfig,
+    config: KartogenConfig,
 ) -> float:
     """Cartesian wind direction (radians, 0 = +x) for one hex.
 
@@ -288,7 +288,7 @@ def _moisture_along_path(
     sea: SeaLayer,
     temperatures: dict[Hex, float],
     max_steps: int,
-    config: WorldgenConfig,
+    config: KartogenConfig,
 ) -> float:
     """Walk upwind from ``target`` along cartesian direction ``theta`` and
     return the moisture deposited at ``target``."""
@@ -329,7 +329,7 @@ def compute_wind_directions(
     elevation: ElevationLayer,
     sea: SeaLayer,
     half_height_km: float,
-    config: WorldgenConfig,
+    config: KartogenConfig,
     rng: RngHierarchy,
 ) -> dict[Hex, tuple[float, float]]:
     """Per-hex wind direction as a unit vector in cartesian screen space.
@@ -339,7 +339,7 @@ def compute_wind_directions(
     once and reused so both the moisture sweep and the wind preview see the
     same field.
     """
-    jitter_noise = PerlinNoise2D.from_rng(rng.child("worldgen", "climate", "wind_jitter"))
+    jitter_noise = PerlinNoise2D.from_rng(rng.child("kartogen", "climate", "wind_jitter"))
     sea_breeze_field = _compute_sea_breeze_field(elevation, sea, config)
     out: dict[Hex, tuple[float, float]] = {}
     for h in elevation.elevation:
@@ -356,7 +356,7 @@ def compute_precipitation(
     ocean: OceanLayer,
     wind_direction: dict[Hex, tuple[float, float]],
     temperatures: dict[Hex, float],
-    config: WorldgenConfig,
+    config: KartogenConfig,
     rng: RngHierarchy,
 ) -> dict[Hex, float]:
     """Per-hex annual precipitation in mm.
@@ -369,7 +369,7 @@ def compute_precipitation(
     accumulates moisture over ocean and deposits with orographic uplift
     over land.
     """
-    precip_noise = PerlinNoise2D.from_rng(rng.child("worldgen", "climate", "precip_noise"))
+    precip_noise = PerlinNoise2D.from_rng(rng.child("kartogen", "climate", "precip_noise"))
 
     # Cap the upwind walk at the world's longest dimension (derived from
     # the input hex set's bounding box), so we don't loop forever on a
@@ -460,7 +460,7 @@ def compute(
     elevation: ElevationLayer,
     sea: SeaLayer,
     ocean: OceanLayer,
-    config: WorldgenConfig,
+    config: KartogenConfig,
     rng: RngHierarchy,
 ) -> ClimateLayer:
     """Compute temperature, wind directions, then precipitation.

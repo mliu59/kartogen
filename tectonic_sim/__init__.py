@@ -1,7 +1,7 @@
 """tectonic_sim — rigid-polygon plate-tectonics simulator.
 
 Pure-physics module. Knows nothing about hex grids; everything happens
-in floating-point km space on a 2D toroidal cell grid. Worldgen calls
+in floating-point km space on a 2D toroidal cell grid. Kartogen calls
 ``simulate_rigid_polygon(...)`` from ``tectonic_sim.polygon_sim`` to get
 the final plate state + cell grids and then samples them at hex centres.
 

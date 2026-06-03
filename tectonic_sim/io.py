@@ -14,7 +14,7 @@ transect tool (and any future analysis tool) consumes directly.
 
 The full ``SimConfig`` is not persisted here — only the scalars
 ``particle_elevation_km`` actually reads. If a downstream tool needs
-more sim-config context, it can load ``config.json`` from the worldgen
+more sim-config context, it can load ``config.json`` from the kartogen
 export folder; that's the source of truth for reproducibility, not this
 state file.
 """
@@ -126,7 +126,7 @@ _NPZ_KEYS = (
 def save_state(path: Path, raw_snapshot: dict) -> None:
     """Persist a polygon-sim raw_snapshot dict to ``path`` as ``.npz``.
 
-    Expects ``raw_snapshot`` in the shape worldgen builds it in
+    Expects ``raw_snapshot`` in the shape kartogen builds it in
     ``tectonics_cast.simulate_tectonics_via_continuous_sim``:
     keys ``owner``, ``crust``, ``age``, ``thickness``, ``cell_km``,
     ``sim_domain``, ``sim_config``. Other keys (``plates``, ``frames``,

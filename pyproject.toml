@@ -1,5 +1,5 @@
 [project]
-name = "worldgen"
+name = "kartogen"
 version = "0.1.0"
 description = "Deterministic, layered hex-grid world generator (elevation, climate, hydrology, biomes)."
 requires-python = ">=3.11"
@@ -13,7 +13,7 @@ dependencies = [
     # Pulled into core because the CLI is verbose by default.
     "tqdm>=4.66",
     # numpy backs the tectonic_sim particle cloud — vectorised drift,
-    # spatial queries, and snapshot arrays. Worldgen itself never imports
+    # spatial queries, and snapshot arrays. Kartogen itself never imports
     # numpy directly, but it ships in the same env as tectonic_sim.
     "numpy>=1.26",
     # scipy is a hard dependency of tectonic_sim: spatial.py uses
@@ -38,13 +38,13 @@ dev = [
 # Both packages live at the repo root, in the same install. The
 # in-package tests directory (``tectonic_sim/tests``) is excluded so
 # the wheel doesn't ship test code to consumers.
-include = ["worldgen*", "tectonic_sim*"]
+include = ["kartogen*", "tectonic_sim*"]
 exclude = ["tectonic_sim.tests*"]
 
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-src = ["worldgen", "tectonic_sim", "tests"]
+src = ["kartogen", "tectonic_sim", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "TCH"]
@@ -54,7 +54,7 @@ python_version = "3.11"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
-packages = ["worldgen", "tectonic_sim"]
+packages = ["kartogen", "tectonic_sim"]
 
 [tool.pytest.ini_options]
 testpaths = ["tectonic_sim/tests", "tests"]

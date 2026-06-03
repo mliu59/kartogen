@@ -1,9 +1,9 @@
-"""Standalone loader for ``[worldgen.*]`` TOML sections.
+"""Standalone loader for ``[kartogen.*]`` TOML sections.
 
 Shared by the engine-side ``SimConfig.from_toml`` and the engine-independent
 preview / test entry points. Importantly this module does **not** import the
 simulation engine, so terrain-only tests and the headless preview can both
-build a ``WorldgenConfig`` without dragging the full agent / resolution
+build a ``KartogenConfig`` without dragging the full agent / resolution
 stack into their import graph.
 """
 
@@ -12,51 +12,51 @@ from __future__ import annotations
 from pathlib import Path
 
 from tectonic_sim.config_loader import load_sim_config_from_path
-from worldgen.types import (
+from kartogen.types import (
     OceanConfig,
-    WorldgenConfig,
+    KartogenConfig,
     WorldShape,
 )
 
 
-def load_worldgen_config(path: Path) -> WorldgenConfig:
-    """Load a ``WorldgenConfig`` from a TOML file.
+def load_kartogen_config(path: Path) -> KartogenConfig:
+    """Load a ``KartogenConfig`` from a TOML file.
 
     The ``tectonics`` field is loaded from a separate
     ``tectonic_sim.toml`` whose path is given (relative to the
-    worldgen.toml file) by the ``[worldgen].tectonic_sim_config`` key.
+    kartogen.toml file) by the ``[kartogen].tectonic_sim_config`` key.
     This keeps the tectonic-physics tunables in a single canonical file
-    that the polygon sim and worldgen both read.
+    that the polygon sim and kartogen both read.
     """
     import tomllib
 
     with open(path, "rb") as f:
         raw = tomllib.load(f)
-    wg = raw["worldgen"]
-    # Resolve relative path against the worldgen.toml file's directory.
+    wg = raw["kartogen"]
+    # Resolve relative path against the kartogen.toml file's directory.
     # Required — missing key raises rather than silently defaulting.
     tect_path_str = wg["tectonic_sim_config"]  # type: ignore[index]
     tect_path = (path.parent / tect_path_str).resolve()
     sim_cfg = load_sim_config_from_path(tect_path)
-    return parse_worldgen_config(wg, sim_config=sim_cfg)
+    return parse_kartogen_config(wg, sim_config=sim_cfg)
 
 
-def parse_worldgen_config(
+def parse_kartogen_config(
     wg: dict[str, object],
     *,
     sim_config: object,
-) -> WorldgenConfig:
-    """Parse a pre-loaded ``[worldgen]`` table into a ``WorldgenConfig``.
+) -> KartogenConfig:
+    """Parse a pre-loaded ``[kartogen]`` table into a ``KartogenConfig``.
 
-    Reads ``[worldgen.elevation]`` plus the
-    ``[worldgen.{climate,hydrology,biome,ocean}]`` sections. Every required
+    Reads ``[kartogen.elevation]`` plus the
+    ``[kartogen.{climate,hydrology,biome,ocean}]`` sections. Every required
     field must be present — missing fields raise rather than silently
     defaulting.
 
     ``sim_config`` is the already-loaded ``tectonic_sim.SimConfig`` — it
-    becomes ``WorldgenConfig.tectonics``. The tectonic-physics fields no
-    longer live in worldgen.toml; they live in
-    ``config/tectonic_sim.toml`` (pointed at by ``[worldgen].tectonic_sim_config``).
+    becomes ``KartogenConfig.tectonics``. The tectonic-physics fields no
+    longer live in kartogen.toml; they live in
+    ``config/tectonic_sim.toml`` (pointed at by ``[kartogen].tectonic_sim_config``).
     """
     wg_elev = dict(wg.get("elevation", {}))  # type: ignore[arg-type]
     wg_clim = wg["climate"]  # type: ignore[index]
@@ -67,10 +67,10 @@ def parse_worldgen_config(
     world_cfg = _parse_world_shape(wg.get("world"))  # type: ignore[arg-type]
     if ocean_cfg is None or world_cfg is None:
         raise ValueError(
-            "WorldgenConfig requires [worldgen.world] and [worldgen.ocean] tables."
+            "KartogenConfig requires [kartogen.world] and [kartogen.ocean] tables."
         )
 
-    return WorldgenConfig(
+    return KartogenConfig(
         hex_size_km=wg["hex_size_km"],  # type: ignore[index]
         world=world_cfg,
         # ``param_temperature`` is optional at load time — absent in the
@@ -126,7 +126,7 @@ def parse_worldgen_config(
 
 
 def _parse_world_shape(raw: dict[str, object] | None) -> WorldShape | None:
-    """Parse the ``[worldgen.world]`` table into a ``WorldShape``."""
+    """Parse the ``[kartogen.world]`` table into a ``WorldShape``."""
     if raw is None:
         return None
     if not isinstance(raw, dict):
@@ -140,7 +140,7 @@ def _parse_world_shape(raw: dict[str, object] | None) -> WorldShape | None:
 
 
 def _parse_ocean_config(raw: dict[str, object] | None) -> OceanConfig | None:
-    """Parse the ``[worldgen.ocean]`` table. Required for v1."""
+    """Parse the ``[kartogen.ocean]`` table. Required for v1."""
     if raw is None:
         return None
     if not isinstance(raw, dict):
@@ -159,4 +159,4 @@ def _parse_ocean_config(raw: dict[str, object] | None) -> OceanConfig | None:
 
 # `_parse_tectonics_config` was deleted in the polygon-sim refactor.
 # Tectonic physics tunables live in ``config/tectonic_sim.toml`` and
-# are loaded by ``load_sim_config_from_path``. See ``load_worldgen_config``.
+# are loaded by ``load_sim_config_from_path``. See ``load_kartogen_config``.

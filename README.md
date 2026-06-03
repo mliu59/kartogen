@@ -1,4 +1,4 @@
-# worldgen
+# kartogen
 
 Deterministic, layered hex-grid world generator: from a `(config, seed)` pair it
 produces per-hex elevation, sea/coast/lake/river flags, temperature, precipitation,
@@ -17,13 +17,13 @@ pip install -e .[dev]     # + pytest, mypy, ruff, py-spy
 Generate, serialize, and render every layer to PNGs:
 
 ```bash
-python -m worldgen --seed 42 --out exports/
-python -m worldgen --seed 42 --out exports/ --config config/worldgen.toml
-python -m worldgen --seed 42 --out exports/ --stop-after climate   # stop early
-python -m worldgen --seed 42 --out exports/ -q                     # quiet
+python -m kartogen --seed 42 --out exports/
+python -m kartogen --seed 42 --out exports/ --config config/kartogen.toml
+python -m kartogen --seed 42 --out exports/ --stop-after climate   # stop early
+python -m kartogen --seed 42 --out exports/ -q                     # quiet
 ```
 
-World dimensions come from `[worldgen.world] width_km, height_km` in the TOML —
+World dimensions come from `[kartogen.world] width_km, height_km` in the TOML —
 there is no size flag; point `--config` at a different TOML to change the footprint.
 Each run writes a fresh `exports/seed<seed>_<W>x<H>km_<timestamp>/` containing
 `snapshot.json`, `layers/<name>.png`, and `tectonic_sim_views/` (plate
@@ -33,10 +33,10 @@ From Python:
 
 ```python
 from pathlib import Path
-from worldgen import generate
-from worldgen.config_loader import load_worldgen_config
+from kartogen import generate
+from kartogen.config_loader import load_kartogen_config
 
-cfg = load_worldgen_config(Path("config/worldgen.toml"))
+cfg = load_kartogen_config(Path("config/kartogen.toml"))
 world = generate(config=cfg, seed=42)
 for hex_coord, data in world.hexes.items():
     print(hex_coord, data.biome, data.elevation, data.temperature_c)

@@ -19,7 +19,7 @@ palette (``tectonic_sim.polygon_sim.viz._color_for``), so transect
 colours line up visually with the partition view.
 
 Sampling is **nearest-neighbour** in cell space — same convention
-worldgen's per-hex sampler uses. That means plate boundaries appear as
+kartogen's per-hex sampler uses. That means plate boundaries appear as
 honest step changes, not smoothed-over interpolation. The segment is
 interpreted **literally** (the direct Cartesian line from ``p1`` to
 ``p2``, not the toroidal-shortest path); per-sample cell lookups still
@@ -120,7 +120,7 @@ def sample_transect(
     wy = (raw_y + half_h) % domain.height_km - half_h
 
     # Cell index in grid frame. Use floor on (centred + half) / cell_km
-    # so the math matches the worldgen hex sampler exactly.
+    # so the math matches the kartogen hex sampler exactly.
     cx = np.floor((wx + half_w) / cell_km).astype(np.int64) % gx
     cy = np.floor((wy + half_h) / cell_km).astype(np.int64) % gy
 
@@ -458,7 +458,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "state", type=Path,
-        help="Path to state.npz (written by worldgen export).",
+        help="Path to state.npz (written by kartogen export).",
     )
     parser.add_argument(
         "--p1", required=True,

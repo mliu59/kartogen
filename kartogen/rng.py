@@ -27,7 +27,7 @@ class RngHierarchy:
         """Create a child RNG from the root seed and a sequence of keys.
 
         Usage:
-            rng.child("worldgen")
+            rng.child("kartogen")
             rng.child("decision", tick, agent_id)
             rng.child("demographics", tick)
         """

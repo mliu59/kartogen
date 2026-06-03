@@ -7,9 +7,9 @@ import json
 from pathlib import Path
 
 import pytest
-from worldgen import (
+from kartogen import (
     GeneratedWorld,
-    WorldgenConfig,
+    KartogenConfig,
     WorldSnapshot,
     export_world,
     load_snapshot,
@@ -84,7 +84,7 @@ def test_snapshot_roundtrip_via_disk(
 
 
 def test_export_world_creates_folder_with_snapshot_and_layer_pngs(
-    small_world_config: WorldgenConfig, tmp_path: Path,
+    small_world_config: KartogenConfig, tmp_path: Path,
 ) -> None:
     folder = export_world(
         config=small_world_config,

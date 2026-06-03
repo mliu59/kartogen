@@ -15,8 +15,8 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable
 
-from worldgen.hex import Hex
-from worldgen.types import WorldShape
+from kartogen.hex import Hex
+from kartogen.types import WorldShape
 
 _SQRT3 = math.sqrt(3.0)
 
@@ -49,7 +49,7 @@ def map_half_extents_km(
 def hex_to_xy_km(h: Hex, hex_size_km: float) -> tuple[float, float]:
     """Flat-top hex axial coord → cartesian pixel centre in km.
 
-    Canonical projection used everywhere worldgen converts a ``Hex`` to
+    Canonical projection used everywhere kartogen converts a ``Hex`` to
     physical (x, y) km.
     """
     return 1.5 * h.q * hex_size_km, _SQRT3 * (h.r + h.q / 2.0) * hex_size_km

@@ -1,6 +1,6 @@
 """Deterministic numpy-RNG hierarchy for ``tectonic_sim``.
 
-Mirrors the shape of ``worldgen.rng.RngHierarchy`` but produces
+Mirrors the shape of ``kartogen.rng.RngHierarchy`` but produces
 ``np.random.Generator`` instances rather than ``random.Random``, so the
 sim's vectorised draws (positions, velocities, type assignments) stay on
 numpy throughout.

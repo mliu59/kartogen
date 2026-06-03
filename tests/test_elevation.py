@@ -8,11 +8,11 @@ layer requires a ``LithosphereState`` as input.
 from __future__ import annotations
 
 import pytest
-from worldgen import generate
-from worldgen.types import WorldgenConfig
+from kartogen import generate
+from kartogen.types import KartogenConfig
 
 pytestmark = pytest.mark.slow  # full generate()/sim per test
-def test_elevation_deterministic(small_world_config: WorldgenConfig) -> None:
+def test_elevation_deterministic(small_world_config: KartogenConfig) -> None:
     """Same seed + config produces byte-identical elevation."""
     a = generate(config=small_world_config, seed=42)
     b = generate(config=small_world_config, seed=42)

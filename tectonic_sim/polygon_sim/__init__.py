@@ -1,8 +1,8 @@
 """Polygon-based tectonic simulation.
 
-Rigid-polygon plate model with per-cell paint grids. Worldgen's
+Rigid-polygon plate model with per-cell paint grids. Kartogen's
 production tectonics path goes through this package via
-``worldgen.tectonics_cast.simulate_tectonics_via_continuous_sim``.
+``kartogen.tectonics_cast.simulate_tectonics_via_continuous_sim``.
 
   - ``types``        — Hotspot, PolygonPlate, AlphaComplex + RNG tags
   - ``topology``     — torus-aware grid helpers + connected components
@@ -26,7 +26,7 @@ production tectonics path goes through this package via
 
 from __future__ import annotations
 
-# The only symbols re-exported at package level are the ones worldgen's
+# The only symbols re-exported at package level are the ones kartogen's
 # bridge / exporter actually consumes. Everything else stays private to
 # polygon_sim; import the submodule directly if you need it.
 

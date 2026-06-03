@@ -1,6 +1,6 @@
 """Headless terrain preview: rendering library for a ``GeneratedWorld``.
 
-Pure library — no CLI; ``python -m worldgen`` (see ``export.py``) is the
+Pure library — no CLI; ``python -m kartogen`` (see ``export.py``) is the
 canonical entry point for producing PNGs. Each layer is rendered from
 intermediate state on ``GeneratedWorld`` so partial pipelines (set via
 ``stop_after``) still produce the layers that can be made.
@@ -26,11 +26,11 @@ from typing import TYPE_CHECKING
 
 from PIL import Image, ImageDraw, ImageFont
 
-from worldgen.hex import Hex
-from worldgen.world import rect_world_hexes, world_pixel_bounds
+from kartogen.hex import Hex
+from kartogen.world import rect_world_hexes, world_pixel_bounds
 
 if TYPE_CHECKING:
-    from worldgen.pipeline import GeneratedWorld
+    from kartogen.pipeline import GeneratedWorld
 
 
 # Minimum pipeline step (from ``pipeline.PIPELINE_STEPS``) required for a
@@ -444,13 +444,13 @@ def _render_wind(
     Arrows on a sparse sample of hexes show the actual per-hex wind
     direction, including sea-breeze + Perlin jitter perturbations.
     """
-    from worldgen.climate import (
+    from kartogen.climate import (
         _WIND_BAND_HI_DEG,
         _WIND_BAND_LO_DEG,
         _zonal_wind_sign,
         hex_latitude_deg,
     )
-    from worldgen.world import map_half_extents_km
+    from kartogen.world import map_half_extents_km
 
     w, h, cx, cy = _figure_size(gen, hex_px)
     img = Image.new("RGB", (w, h), color=(20, 20, 30))

@@ -1,5 +1,5 @@
 # =========================================================================
-# Worldgen pipeline parameters (elevation, climate, hydrology, biome).
+# Kartogen pipeline parameters (elevation, climate, hydrology, biome).
 # Each layer is a pure function of earlier outputs + a seeded child-RNG
 # keyed by layer name. Scale-dependent values are in physical units
 # (km, km², mm) and converted via hex_size_km, so a world looks identical
@@ -7,14 +7,14 @@
 # Pipeline: L1 elevation → L2 sea → L3 climate → L4 precip → L5 hydrology → L6 biome
 # =========================================================================
 
-[worldgen]
+[kartogen]
 hex_size_km = 5.0                    # physical size per hex; rescales all physical-unit knobs
 
 # Path (relative to this file) to the standalone tectonic_sim config —
 # the sole source of tectonic-physics tunables.
 tectonic_sim_config = "tectonic_sim.toml"
 
-[worldgen.world]
+[kartogen.world]
 # Rectangular map footprint (km). Hex set = every flat-top hex centre in
 # [-W/2, W/2] × [-H/2, H/2]. Width = E-W (constant latitude); height = N-S
 # (latitude varies; see climate map_lat_min/max).
@@ -26,7 +26,7 @@ height_km = 2500.0
 # fBm/ridged noise adds detail blended at tectonic_blend_weight.
 # =========================================================================
 
-[worldgen.elevation]
+[kartogen.elevation]
 feature_wavelength_km = 260.0
 noise_octaves = 6
 noise_lacunarity = 2.0
@@ -38,7 +38,7 @@ ridge_amplitude = 0.70
 ridge_threshold = 0.10
 tectonic_blend_weight = 1.0          # 1 = pure tectonics, 0 = pure noise
 
-[worldgen.climate]
+[kartogen.climate]
 # Latitude window the map's N-S axis covers: y=-H/2 (north) → map_lat_max,
 # y=+H/2 (south) → map_lat_min. Independent of width/hex_size. (-90, 90) =
 # pole-to-pole.
@@ -74,14 +74,14 @@ wind_path_samples = 5
 wind_path_spread_deg = 25.0
 precip_smoothing_passes = 2          # final-field smoothing (self + 6 land neighbours); 0 = off
 
-[worldgen.hydrology]
+[kartogen.hydrology]
 # Sink-fill + D6 flow accumulation. Rivers where drainage exceeds threshold;
 # lakes where sinks were filled.
 river_drainage_threshold_km2 = 1300.0
 lake_min_depth = 0.03                # min fill depth for lake (else marsh)
 river_carve_amount = 0.04            # visual elevation lowering along rivers
 
-[worldgen.biome]
+[kartogen.biome]
 # Whittaker classification at sea-level temperature; elevation overrides above.
 elevation_hills_threshold = 0.78     # base-elev quantile → hills
 elevation_mountain_threshold = 0.90
@@ -97,7 +97,7 @@ forest_max_precip = 1200.0
 cool_band_dry_threshold = 150.0      # cool-band tundra vs taiga cutoff
 # Above forest_max_precip → jungle (warm) or temperate_forest (cool).
 
-[worldgen.ocean]
+[kartogen.ocean]
 # Ocean currents (Tier 2): each basin split by hemisphere into gyres (CW north,
 # CCW south). Per ocean hex, direction = gyre tangent; temp anomaly = upstream
 # lat-temp minus local, scaled — yields warm western / cold eastern boundary

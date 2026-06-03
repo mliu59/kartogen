@@ -1,4 +1,4 @@
-# CLAUDE.md — Worldgen
+# CLAUDE.md — Kartogen
 
 This file is the project's memory and design contract. Read it fully before making any changes. When in doubt, the principles here override your defaults.
 
@@ -10,7 +10,7 @@ DO NOT use this document as an active tracker for temporary status. Any temporar
 
 ## Project mission
 
-`worldgen` is a deterministic, layered hex-grid world generator: from a `(config, seed)` pair it produces a `GeneratedWorld` containing per-hex elevation, sea/coast/lake/river flags, temperature, precipitation, and biome — plus the intermediate layer outputs needed for testing and rendering. The world is a rectangular footprint set by `[worldgen.world] width_km, height_km` (`WorldShape` in `worldgen.types`) — not a hex radius.
+`kartogen` is a deterministic, layered hex-grid world generator: from a `(config, seed)` pair it produces a `GeneratedWorld` containing per-hex elevation, sea/coast/lake/river flags, temperature, precipitation, and biome — plus the intermediate layer outputs needed for testing and rendering. The world is a rectangular footprint set by `[kartogen.world] width_km, height_km` (`WorldShape` in `kartogen.types`) — not a hex radius.
 
 The package has no runtime dependencies; the optional `[preview]` extra adds Pillow for PNG rendering.
 
@@ -36,22 +36,22 @@ If a design choice trades against any of these three, flag it and ask before pro
 
 **No backwards compatibility.** When changing a feature, *change it*. Don't add fallback paths, default values to paper over missing fields, optional flags toggling old vs new behavior, or compatibility shims. If old call sites break, fix them.
 
-**Explicit data structures.** All state objects are `@dataclass(frozen=True)` in `worldgen/types.py`. No bare dicts for anything with a stable schema. No default values on dataclass fields whose meaning is non-trivial — missing-data bugs should surface at construction, not as silent zeros downstream.
+**Explicit data structures.** All state objects are `@dataclass(frozen=True)` in `kartogen/types.py`. No bare dicts for anything with a stable schema. No default values on dataclass fields whose meaning is non-trivial — missing-data bugs should surface at construction, not as silent zeros downstream.
 
 **Module boundaries:**
 
 ```
-worldgen/
+kartogen/
 ├── hex.py             — Hex coordinate primitive (axial + spiral iterator)
 ├── terrain.py         — TERRAIN_NAMES (the canonical biome name tuple)
 ├── rng.py             — RngHierarchy (sha256-keyed child RNGs)
-├── types.py           — WorldgenConfig + per-layer dataclasses + HexData
-├── config_loader.py   — TOML → WorldgenConfig
+├── types.py           — KartogenConfig + per-layer dataclasses + HexData
+├── config_loader.py   — TOML → KartogenConfig
 ├── pipeline.py        — orchestrator; returns GeneratedWorld
 ├── tectonics.py       — L0: per-hex result types + adaptor that delegates
 │                         to tectonics_cast
 ├── tectonics_cast.py  — Bridge: runs `tectonic_sim.polygon_sim`, samples
-│                         its final cell grid onto worldgen hexes
+│                         its final cell grid onto kartogen hexes
 ├── elevation.py       — L1: tectonic baseline + fBm/ridged detail + analytic mask
 ├── sea.py             — L2: ocean/coast mask
 ├── climate.py         — L3+L4: temperature + precipitation (wind sweep, orographic)
@@ -64,7 +64,7 @@ worldgen/
                          tectonic_sim visualisation artefacts)
 ```
 
-Tests under `tests/` mirror the package; `conftest.py` exposes `default_worldgen_config`, `small_world` (120×120 km, seed 42), and `medium_world` (300×300 km, seed 42) session-scoped fixtures.
+Tests under `tests/` mirror the package; `conftest.py` exposes `default_kartogen_config`, `small_world` (120×120 km, seed 42), and `medium_world` (300×300 km, seed 42) session-scoped fixtures.
 
 ## World generation pipeline
 
@@ -87,7 +87,7 @@ GeneratedWorld
 
 ## Ocean layer (Tier 2 climate)
 
-`worldgen/ocean.py` runs between sea and climate, producing per-hex
+`kartogen/ocean.py` runs between sea and climate, producing per-hex
 current directions and temperature anomalies as an annual-mean
 snapshot. It captures three coupled effects:
 
@@ -107,24 +107,24 @@ advection, and vegetation feedback are not modelled.
 
 ## Tectonics layer
 
-`worldgen.tectonics.simulate_tectonics` is a thin worldgen adaptor over
+`kartogen.tectonics.simulate_tectonics` is a thin kartogen adaptor over
 the rigid-polygon `tectonic_sim.polygon_sim` package. It delegates to
-`worldgen.tectonics_cast.simulate_tectonics_via_continuous_sim`, which
-runs the polygon sim on a domain larger than the worldgen world (so
+`kartogen.tectonics_cast.simulate_tectonics_via_continuous_sim`, which
+runs the polygon sim on a domain larger than the kartogen world (so
 plates have room to drift), samples the final cell grid at every
 world-hex centre, and packages the raw polygon-sim output onto
 `LithosphereState.raw_snapshot` for export-time renderers.
 
 **`tectonic_sim` has no crop concept.** It outputs the full sim domain
 — per-tick frames and the final `(owner, crust, age, thickness)` ndarrays
-all cover the entire torus the sim runs on. Worldgen does its own
+all cover the entire torus the sim runs on. Kartogen does its own
 sampling: `_sample_polygon_at_hex_centres` reads each world-hex's
 mantle-frame `(x, y)` directly from the full sim grid (wrap modulo
 puts the hex into the sim's central region by construction). The
-`tectonic_sim_views/` PNGs and GIFs that worldgen exports render the
+`tectonic_sim_views/` PNGs and GIFs that kartogen exports render the
 full sim — including the buffer area outside the world rectangle —
 so plate drift, sutures, and hotspots remain visible everywhere. The
-worldgen-specific per-hex outputs (`layers/elevation.png`, etc.) stay
+kartogen-specific per-hex outputs (`layers/elevation.png`, etc.) stay
 world-sized because they're built from the hex set.
 
 The export also writes `tectonic_sim_views/state.npz` — the raw sim
@@ -153,7 +153,7 @@ read off these axes feed directly into the transect tool's
 The polygon sim itself models plate kinematics, contention, fusion,
 rifting, accretion, hotspot volcanism, erosion, and connected-component
 culling as a per-tick pipeline. See `tectonic_sim/polygon_sim/` for the
-authoritative implementation; the worldgen side does not know or care
+authoritative implementation; the kartogen side does not know or care
 about the per-tick order.
 
 **Continuous-pose architecture.** Each plate's canonical state is its
@@ -197,10 +197,10 @@ crust, or — when their surround is continental above a threshold — a
 continental **basin** (`divergent_fill_*`).
 
 **Single source of truth for configuration.** `config/tectonic_sim.toml`
-holds every tunable for the polygon sim. Worldgen reads it directly
-(path from `[worldgen].tectonic_sim_config` in `worldgen.toml`) and
-assigns the resulting `SimConfig` to `WorldgenConfig.tectonics`.
-`TectonicsConfig` in `worldgen.types` is a transparent alias for
+holds every tunable for the polygon sim. Kartogen reads it directly
+(path from `[kartogen].tectonic_sim_config` in `kartogen.toml`) and
+assigns the resulting `SimConfig` to `KartogenConfig.tectonics`.
+`TectonicsConfig` in `kartogen.types` is a transparent alias for
 `SimConfig`; there is no second source of tectonic-sim tunables.
 
 **Sea level is decoupled from crust dynamics.** `sea_level_km` is a
@@ -211,7 +211,7 @@ water line for directly comparable maps.
 
 ## `param_temperature` — physics-parameter exploration
 
-`WorldgenConfig.param_temperature` is a top-level hyperparameter that
+`KartogenConfig.param_temperature` is a top-level hyperparameter that
 controls how much the run perturbs subsystem physics around its
 configured baseline. `0` is fully deterministic; larger values produce a
 parameter draw whose spread is proportional to the temperature.
@@ -226,7 +226,7 @@ reshuffle the base seed.
 ## Map latitude window
 
 `hex_size_km` (the physical resolution) is **independent** of where the
-map sits on the planet. `[worldgen.climate]` carries `map_lat_min` /
+map sits on the planet. `[kartogen.climate]` carries `map_lat_min` /
 `map_lat_max` — the geographic latitudes the map's r-axis covers. The
 planet's overall climate is anchored by `equator_temp_c` and
 `polar_temp_c`; the map samples a slice of that gradient through its
@@ -243,11 +243,11 @@ automatically rescales noise frequency, wind reach, river thresholds,
 and precipitation rates — the same physical world looks the same at any
 chosen resolution.
 
-The per-hex output schema lives in `HexData` (`worldgen/types.py`).
+The per-hex output schema lives in `HexData` (`kartogen/types.py`).
 
 ## Export
 
-Two public endpoints in `worldgen.export` (re-exported from the package root):
+Two public endpoints in `kartogen.export` (re-exported from the package root):
 
 - `serialize_world(world) -> WorldSnapshot` — pure projection of a
   `GeneratedWorld` into a generic, JSON-friendly container. No side effects;
@@ -262,6 +262,15 @@ Two public endpoints in `worldgen.export` (re-exported from the package root):
 
 `save_snapshot` / `load_snapshot` are JSON file I/O helpers; `WorldSnapshot`
 itself is format-agnostic via `to_dict` / `from_dict`.
+
+**Visualization payload is opt-in.** The tectonics sim's render payload
+(GIF frames + outline polygons → `LithosphereState.raw_snapshot` →
+`tectonic_sim_views/`) is gated by a `render_visuals` flag threaded
+`generate → simulate_tectonics → tectonics_cast → simulate_rigid_polygon`.
+It defaults to `False` (plain `generate()` skips frame capture and the
+alpha-complex pass, leaving `raw_snapshot` `None`); `export_world` sets it
+`True`. The per-hex terrain output is identical either way — only the
+render artefacts differ.
 
 **`WorldSnapshot` is deliberately a generic data container.** All three fields
 are open-ended `dict[str, Any]` / `list[dict[str, Any]]`:
@@ -278,7 +287,7 @@ into the existing dicts. This is the extension point as the simulator grows.
 
 ## Export CLI
 
-`python -m worldgen` is the canonical entry point — it generates a world,
+`python -m kartogen` is the canonical entry point — it generates a world,
 serializes it to `snapshot.json`, and renders every available layer as a
 PNG under `layers/` (continuous layers carry a colour-scale legend) plus
 the `tectonic_sim_views/` renders (partition / crust / topography /
@@ -286,14 +295,14 @@ thickness + drift GIFs). Plate structure is inspected through
 `tectonic_sim_views/`, not per-hex plate layers.
 
 ```
-python -m worldgen --seed 42 --out exports/
-python -m worldgen --seed 42 --out exports/ --stop-after climate
-python -m worldgen --seed 42 --out exports/ -q   # silence logs
-python -m worldgen --seed 42 --out exports/ --profile
-python -m worldgen --seed 42 --config path/to/custom.toml --out exports/
+python -m kartogen --seed 42 --out exports/
+python -m kartogen --seed 42 --out exports/ --stop-after climate
+python -m kartogen --seed 42 --out exports/ -q   # silence logs
+python -m kartogen --seed 42 --out exports/ --profile
+python -m kartogen --seed 42 --config path/to/custom.toml --out exports/
 ```
 
-World dimensions come from `[worldgen.world] width_km, height_km` in the
+World dimensions come from `[kartogen.world] width_km, height_km` in the
 TOML — there is no `--radius` / `--width` / `--height` CLI override; if
 you want a different footprint, point `--config` at a TOML with the
 shape you want.
@@ -302,7 +311,7 @@ shape you want.
 `PIPELINE_STEPS`); only the layers whose source data is populated are
 rendered. Default logging is DEBUG (per-layer timings + progress bars);
 `-q`/`--quiet` drops to WARNING. Requires the `[preview]` extra
-(Pillow). `worldgen/preview.py` is a pure library; `python -m worldgen`
+(Pillow). `kartogen/preview.py` is a pure library; `python -m kartogen`
 is the only CLI.
 
 `--profile` re-execs the run under py-spy and records a wall-clock
@@ -315,27 +324,27 @@ alongside the export folder; pair with `--profile-sample-rate HZ`
 
 `demos/` is intentionally near-empty (only `__init__.py` and a
 gitignored `output/`). All visual inspection and profiling runs
-through the canonical `python -m worldgen` entry point: polygon-sim
+through the canonical `python -m kartogen` entry point: polygon-sim
 renders land in `<export>/tectonic_sim_views/`, profiling is the
 `--profile` flag (see Export CLI).
 
 Add new demos here only when they exercise something the main CLI
 genuinely can't (e.g. multi-seed parameter sweeps across processes);
-otherwise prefer extending `python -m worldgen`.
+otherwise prefer extending `python -m kartogen`.
 
 ## Conventions
 
-**Python.** 3.11+. Modern type hints (`list[int]`, `X | None`, etc.). Code should pass `mypy --strict` on `worldgen/`.
+**Python.** 3.11+. Modern type hints (`list[int]`, `X | None`, etc.). Code should pass `mypy --strict` on `kartogen/`.
 
 **Formatting & linting.** `ruff` for both. Config in `pyproject.toml`.
 
-**Testing.** `pytest`. Tests in `tests/` mirror `worldgen/`. Use fixtures for common world setups. End-to-end tests that drive a full `generate()`/sim are marked `@pytest.mark.slow` (module-level `pytestmark`); skip them during quick iteration with `pytest -m "not slow"` (sub-second), and run the full suite before committing.
+**Testing.** `pytest`. Tests in `tests/` mirror `kartogen/`. Use fixtures for common world setups. End-to-end tests that drive a full `generate()`/sim are marked `@pytest.mark.slow` (module-level `pytestmark`); skip them during quick iteration with `pytest -m "not slow"` (sub-second), and run the full suite before committing.
 
 **Naming.**
 - `layer` = one pipeline stage; `LayerOutput` = its frozen dataclass result
 - `hex` (lowercase) = a `Hex` coordinate; `hexes` = an iterable of them
 - `gen` / `world` = a `GeneratedWorld`
-- `cfg` = a `WorldgenConfig`
+- `cfg` = a `KartogenConfig`
 
 **RNG discipline.** Single root seed → `RngHierarchy(seed)`. Layers call `rng.child("layer_name")` (or a more specific tuple) to get a `random.Random`. Never call the root RNG directly. Never seed from `time.time()`.
 
@@ -344,7 +353,7 @@ otherwise prefer extending `python -m worldgen`.
 ## Anti-patterns to avoid
 
 - Hidden randomness outside `RngHierarchy`.
-- Magic numbers in code. Coefficients go in `config/worldgen.toml`.
+- Magic numbers in code. Coefficients go in `config/kartogen.toml`.
 - Backwards-compat shims when changing a feature. No fallback paths, no "if not configured, do the old thing" branches.
 - Premature abstraction. Don't build a plugin system for layers; we have a handful.
 - Premature optimization. Clarity wins for v0. Profile before tuning.

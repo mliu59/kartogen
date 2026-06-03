@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from worldgen.pipeline import GeneratedWorld
+from kartogen.pipeline import GeneratedWorld
 
 pytestmark = pytest.mark.slow  # full generate()/sim per test
 def test_filled_elevation_is_at_least_natural(medium_world: GeneratedWorld) -> None:

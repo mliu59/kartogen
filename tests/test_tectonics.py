@@ -7,15 +7,15 @@ from dataclasses import replace
 from typing import cast
 
 import pytest
-from worldgen import generate
-from worldgen.tectonics import (
+from kartogen import generate
+from kartogen.tectonics import (
     PLATE_TYPE_CONTINENTAL,
     PLATE_TYPE_OCEANIC,
     LithosphereColumn,
     LithosphereState,
     column_to_elevation_km,
 )
-from worldgen.types import TectonicsConfig, WorldgenConfig, WorldShape
+from kartogen.types import TectonicsConfig, KartogenConfig, WorldShape
 
 # ---------------------------------------------------------------------------
 # Closed-form elevation map (``column_to_elevation_km``) — exercised against
@@ -25,15 +25,15 @@ from worldgen.types import TectonicsConfig, WorldgenConfig, WorldShape
 
 
 pytestmark = pytest.mark.slow  # full generate()/sim per test
-def _tectonics(default_worldgen_config: WorldgenConfig) -> TectonicsConfig:
-    return cast(TectonicsConfig, default_worldgen_config.tectonics)
+def _tectonics(default_kartogen_config: KartogenConfig) -> TectonicsConfig:
+    return cast(TectonicsConfig, default_kartogen_config.tectonics)
 
 
 def test_old_oceanic_crust_subsides_below_young(
-    default_worldgen_config: WorldgenConfig,
+    default_kartogen_config: KartogenConfig,
 ) -> None:
     """Half-space cooling: older oceanic crust must sit deeper than fresh ridge crust."""
-    cfg = _tectonics(default_worldgen_config)
+    cfg = _tectonics(default_kartogen_config)
     young = LithosphereColumn(
         crust_type=PLATE_TYPE_OCEANIC, thickness_km=cfg.oceanic_thickness_km,
         age_myr=0.0,
@@ -51,10 +51,10 @@ def test_old_oceanic_crust_subsides_below_young(
 
 
 def test_ocean_floor_depth_caps_at_max(
-    default_worldgen_config: WorldgenConfig,
+    default_kartogen_config: KartogenConfig,
 ) -> None:
     """Subsidence is capped at ``max_ocean_depth_km`` — abyssal plains don't sink forever."""
-    cfg = _tectonics(default_worldgen_config)
+    cfg = _tectonics(default_kartogen_config)
     ancient = LithosphereColumn(
         crust_type=PLATE_TYPE_OCEANIC, thickness_km=cfg.oceanic_thickness_km,
         age_myr=10_000.0,  # absurdly old
@@ -63,10 +63,10 @@ def test_ocean_floor_depth_caps_at_max(
 
 
 def test_continental_isostasy_thicker_means_higher(
-    default_worldgen_config: WorldgenConfig,
+    default_kartogen_config: KartogenConfig,
 ) -> None:
     """Thicker continental crust → higher elevation; equal to reference → sea level."""
-    cfg = _tectonics(default_worldgen_config)
+    cfg = _tectonics(default_kartogen_config)
     at_ref = LithosphereColumn(
         crust_type=PLATE_TYPE_CONTINENTAL,
         thickness_km=cfg.continental_reference_thickness_km,
@@ -90,11 +90,11 @@ def test_continental_isostasy_thicker_means_higher(
 
 
 def test_simulation_deterministic_under_fixed_seed(
-    default_worldgen_config: WorldgenConfig,
+    default_kartogen_config: KartogenConfig,
 ) -> None:
     """Identical (config, seed) → identical lithosphere state."""
-    a = generate(config=replace(default_worldgen_config, world=WorldShape(width_km=80.0, height_km=80.0)), seed=42)
-    b = generate(config=replace(default_worldgen_config, world=WorldShape(width_km=80.0, height_km=80.0)), seed=42)
+    a = generate(config=replace(default_kartogen_config, world=WorldShape(width_km=80.0, height_km=80.0)), seed=42)
+    b = generate(config=replace(default_kartogen_config, world=WorldShape(width_km=80.0, height_km=80.0)), seed=42)
     assert a.lithosphere is not None and b.lithosphere is not None
     for h in a.hexes:
         assert a.lithosphere.elevation_km[h] == b.lithosphere.elevation_km[h]
@@ -103,13 +103,13 @@ def test_simulation_deterministic_under_fixed_seed(
 
 
 def test_sea_level_threshold_classifies_consistently(
-    default_worldgen_config: WorldgenConfig,
+    default_kartogen_config: KartogenConfig,
 ) -> None:
     """Hexes above sea_level_km in the lithosphere should map to is_ocean=False
     (and the converse). The normalized elevation field puts sea level at 0."""
-    world = generate(config=replace(default_worldgen_config, world=WorldShape(width_km=100.0, height_km=100.0)), seed=42)
+    world = generate(config=replace(default_kartogen_config, world=WorldShape(width_km=100.0, height_km=100.0)), seed=42)
     lith = cast(LithosphereState, world.lithosphere)
-    sea_km = _tectonics(default_worldgen_config).sea_level_km
+    sea_km = _tectonics(default_kartogen_config).sea_level_km
 
     above = below = 0
     for h, d in world.hexes.items():
@@ -128,17 +128,17 @@ def test_sea_level_threshold_classifies_consistently(
 
 
 def test_changing_sea_level_threshold_shifts_land_fraction(
-    default_worldgen_config: WorldgenConfig,
+    default_kartogen_config: KartogenConfig,
 ) -> None:
     """Raising sea_level_km drowns land; lowering it exposes ocean floor."""
-    base_world = generate(config=replace(default_worldgen_config, world=WorldShape(width_km=120.0, height_km=120.0)), seed=42)
+    base_world = generate(config=replace(default_kartogen_config, world=WorldShape(width_km=120.0, height_km=120.0)), seed=42)
     base_land = sum(1 for d in base_world.hexes.values() if not d.is_ocean)
 
     high_sea = replace(
-        _tectonics(default_worldgen_config),
+        _tectonics(default_kartogen_config),
         sea_level_km=2.0,
     )
-    high_cfg = replace(default_worldgen_config, tectonics=high_sea)
+    high_cfg = replace(default_kartogen_config, tectonics=high_sea)
     high_world = generate(config=replace(high_cfg, world=WorldShape(width_km=120.0, height_km=120.0)), seed=42)
     high_land = sum(1 for d in high_world.hexes.values() if not d.is_ocean)
 

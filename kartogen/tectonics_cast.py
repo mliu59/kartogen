@@ -1,9 +1,9 @@
 """Bridge from the rigid-polygon ``tectonic_sim.polygon_sim`` package to
-worldgen's hex-grid ``LithosphereState``.
+kartogen's hex-grid ``LithosphereState``.
 
-Worldgen's downstream layers (elevation, climate, hydrology, biome,
+Kartogen's downstream layers (elevation, climate, hydrology, biome,
 preview, snapshot export) expect their tectonics input as the
-dataclasses defined in ``worldgen/tectonics.py``: per-hex
+dataclasses defined in ``kartogen/tectonics.py``: per-hex
 ``LithosphereColumn`` dicts, plate ownership keyed by ``Hex``. This
 module:
 
@@ -12,7 +12,7 @@ module:
   2. Derives ``plate_count`` and ``motion_speed_kmpy`` from the sim
      domain area + duration so plate population scales with world size.
   3. Runs ``simulate_rigid_polygon`` on a domain larger than the
-     worldgen world (``_SIM_DOMAIN_MULTIPLIER``) so plates have room to
+     kartogen world (``_SIM_DOMAIN_MULTIPLIER``) so plates have room to
      drift without self-wrapping.
   4. Samples the final cell grid at every world-hex centre to build the
      ``LithosphereColumn`` / ``plate_id`` / ``elevation_km`` dicts.
@@ -26,15 +26,15 @@ from __future__ import annotations
 
 import numpy as np
 
-from worldgen._log import get_logger
-from worldgen.hex import Hex
-from worldgen.tectonics import (
+from kartogen._log import get_logger
+from kartogen.hex import Hex
+from kartogen.tectonics import (
     LithosphereColumn,
     LithosphereState,
     TectonicPlate,
 )
-from worldgen.types import TectonicsConfig, WorldShape
-from worldgen.world import hex_to_xy_km
+from kartogen.types import TectonicsConfig, WorldShape
+from kartogen.world import hex_to_xy_km
 
 from tectonic_sim import (
     SimConfig,
@@ -48,8 +48,8 @@ from tectonic_sim.types import CRUST_CONTINENTAL, CRUST_OCEANIC
 _log = get_logger("tectonics_cast")
 
 
-# Polygon-sim runs on a LARGER domain than the worldgen world. The
-# central worldgen-sized region is what gets sampled for per-hex output
+# Polygon-sim runs on a LARGER domain than the kartogen world. The
+# central kartogen-sized region is what gets sampled for per-hex output
 # and rendered as the cropped views in tectonic_sim_views/. Benefits:
 #   - more plates (count scales with area),
 #   - more velocity variety per plate,
@@ -72,18 +72,26 @@ def simulate_tectonics_via_continuous_sim(
     seed: int,
     *,
     param_temperature: float = 0.0,
+    render_visuals: bool = False,
 ) -> LithosphereState:
     """Run the polygon-sim and cast its output to a ``LithosphereState``.
 
     Pure function of all inputs. The same ``(config, seed,
-    param_temperature)`` triple always produces the same
+    param_temperature)`` triple always produces the same per-hex
     ``LithosphereState``. ``param_temperature > 0`` perturbs every
     randomizable field of the loaded ``SimConfig`` via
     ``randomize_sim_config`` before the run.
+
+    ``render_visuals`` toggles the visualization payload: when ``False``
+    (the default for plain generation), the polygon sim skips GIF-frame
+    capture and outline-polygon construction, and ``raw_snapshot`` is left
+    ``None``. Set it ``True`` (as ``export_world`` does) to populate
+    ``raw_snapshot`` so the ``tectonic_sim_views`` artefacts can be
+    rendered. The per-hex terrain output is identical either way.
     """
-    # ``config`` IS already a SimConfig — the worldgen config loader
+    # ``config`` IS already a SimConfig — the kartogen config loader
     # loads ``config/tectonic_sim.toml`` directly and assigns the
-    # result to ``WorldgenConfig.tectonics``.
+    # result to ``KartogenConfig.tectonics``.
     sim_cfg = config
     if param_temperature > 0:
         # Tag the random draw's seed with a magic word so changing
@@ -99,7 +107,7 @@ def simulate_tectonics_via_continuous_sim(
             sim_cfg.motion_speed_kmpy,
         )
 
-    # The worldgen "world" is the visible region. The polygon sim runs
+    # The kartogen "world" is the visible region. The polygon sim runs
     # on a LARGER domain so plates have room to drift without self-
     # wrapping and so the plate population is denser. ``world_domain``
     # is what gets sampled at hex centres (matches the user-visible
@@ -115,7 +123,7 @@ def simulate_tectonics_via_continuous_sim(
     # Override plate_count and motion_speed_kmpy with prototype-style
     # domain-derived values. The default SimConfig.plate_count and
     # motion_speed are tuned for a tiny test world, not for the larger
-    # sim_domain that worldgen uses. Without these overrides we get ~5
+    # sim_domain that kartogen uses. Without these overrides we get ~5
     # plates on a 4M km² sim (prototype gets ~80) and motion speeds
     # uncalibrated to the sim duration.
     from dataclasses import replace as _dc_replace
@@ -145,19 +153,20 @@ def simulate_tectonics_via_continuous_sim(
     )
 
     # Polygon-sim runs on the larger sim_domain and returns FULL-SIM
-    # arrays + FULL-SIM captured frames. Worldgen reads them as-is:
+    # arrays + FULL-SIM captured frames. Kartogen reads them as-is:
     #   - per-hex sampling reads the full sim grid directly (the hex's
     #     world-frame km coordinate maps through wrap into the sim's
     #     central region — no cropping needed);
     #   - tectonic_sim_views/* PNGs and GIFs render the full sim, so
     #     plate drift outside the world is visible (matching the
     #     polygons.png convention).
-    # Worldgen's own per-hex outputs (layers/elevation.png etc.) stay
+    # Kartogen's own per-hex outputs (layers/elevation.png etc.) stay
     # world-sized because they're built from world_hexes.
     out = simulate_rigid_polygon(
         sim_domain, sim_cfg, seed=seed,
-        capture_every=sim_cfg.snapshot_period_ticks,
+        capture_every=sim_cfg.snapshot_period_ticks if render_visuals else 0,
         frame_upscale=4,
+        render_visuals=render_visuals,
     )
     (
         polygon_plates, owner, crust, age, thick, cell_km, timeline,
@@ -186,17 +195,14 @@ def simulate_tectonics_via_continuous_sim(
 
     tectonic_plates = _build_polygon_tectonic_plates(polygon_plates)
 
-    return LithosphereState(
-        columns=columns,
-        plate_id=plate_id_per_hex,
-        elevation_km=elevation_per_hex,
-        sea_level_km=sim_cfg.sea_level_km,
-        n_ticks_simulated=sim_cfg.n_ticks,
-        plates=tectonic_plates,
-        # Pack the raw polygon-sim output so export-time renderers can
-        # produce the ``tectonic_sim_views/`` subdirectory directly via
-        # ``tectonic_sim.polygon_sim`` renderers.
-        raw_snapshot={
+    # Pack the raw polygon-sim output so export-time renderers can produce
+    # the ``tectonic_sim_views/`` subdirectory directly. Built only when
+    # visuals were requested; otherwise the GIF frames / outline polygons
+    # were never generated, so there is nothing to render and the snapshot
+    # is left ``None``.
+    raw_snapshot = None
+    if render_visuals:
+        raw_snapshot = {
             "kind": "polygon_sim",
             "plates": polygon_plates,
             "owner": owner,
@@ -219,7 +225,16 @@ def simulate_tectonics_via_continuous_sim(
             # "thickness_post", "alpha" arrays at the sim grid shape.
             "t0_smoothing": t0_snapshot,
             "tfinal_smoothing": tfinal_snapshot,
-        },
+        }
+
+    return LithosphereState(
+        columns=columns,
+        plate_id=plate_id_per_hex,
+        elevation_km=elevation_per_hex,
+        sea_level_km=sim_cfg.sea_level_km,
+        n_ticks_simulated=sim_cfg.n_ticks,
+        plates=tectonic_plates,
+        raw_snapshot=raw_snapshot,
     )
 
 
@@ -297,7 +312,7 @@ def _sample_polygon_at_hex_centres(
 
 
 def _build_polygon_tectonic_plates(polygon_plates) -> tuple[TectonicPlate, ...]:
-    """Build the ``TectonicPlate`` tuple worldgen exposes downstream.
+    """Build the ``TectonicPlate`` tuple kartogen exposes downstream.
 
     Type is whichever crust dominates the plate's owned cells
     (continental if any continental cell exists, otherwise oceanic).

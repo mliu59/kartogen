@@ -5,16 +5,16 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
-from worldgen import generate
-from worldgen.types import WorldgenConfig, WorldShape
-from worldgen.world import rect_world_hexes
+from kartogen import generate
+from kartogen.types import KartogenConfig, WorldShape
+from kartogen.world import rect_world_hexes
 
 pytestmark = pytest.mark.slow  # full generate()/sim per test
 def _shape(side_km: float) -> WorldShape:
     return WorldShape(width_km=side_km, height_km=side_km)
 
 
-def test_pipeline_deterministic(small_world_config: WorldgenConfig) -> None:
+def test_pipeline_deterministic(small_world_config: KartogenConfig) -> None:
     """Same (seed, config) produces byte-identical output."""
     a = generate(config=small_world_config, seed=42)
     b = generate(config=small_world_config, seed=42)
@@ -31,20 +31,20 @@ def test_pipeline_deterministic(small_world_config: WorldgenConfig) -> None:
 
 
 def test_pipeline_hex_count_matches_world_shape(
-    default_worldgen_config: WorldgenConfig,
+    default_kartogen_config: KartogenConfig,
 ) -> None:
     """Pipeline assembles HexData for every hex in the rectangular world's
     footprint — and only those — so ``len(gen.hexes)`` equals
     ``len(rect_world_hexes(shape, hex_size_km))``."""
     for side_km in (50.0, 80.0, 130.0):
-        cfg = replace(default_worldgen_config, world=_shape(side_km))
+        cfg = replace(default_kartogen_config, world=_shape(side_km))
         gen = generate(config=cfg, seed=42)
         expected = len(rect_world_hexes(cfg.world, cfg.hex_size_km))
         assert len(gen.hexes) == expected
 
 
-def test_pipeline_runs_at_tiny_world(default_worldgen_config: WorldgenConfig) -> None:
+def test_pipeline_runs_at_tiny_world(default_kartogen_config: KartogenConfig) -> None:
     """A tiny world (a handful of hexes) shouldn't crash — useful smoke test."""
-    cfg = replace(default_worldgen_config, world=_shape(20.0))
+    cfg = replace(default_kartogen_config, world=_shape(20.0))
     gen = generate(config=cfg, seed=42)
     assert len(gen.hexes) > 0

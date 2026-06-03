@@ -1,7 +1,7 @@
 """Load a ``SimConfig`` from a TOML file or a pre-parsed table.
 
 The module deliberately has *no* knowledge of where its config lives —
-worldgen (or any other caller) is free to keep ``tectonic_sim.toml`` as a
+kartogen (or any other caller) is free to keep ``tectonic_sim.toml`` as a
 standalone file or to inline the keys inside its own config. Two
 entry points cover both cases:
 

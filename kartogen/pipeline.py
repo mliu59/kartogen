@@ -4,28 +4,28 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from worldgen._log import get_logger, timed_layer
-from worldgen.rng import RngHierarchy
-from worldgen.hex import Hex
-from worldgen import biome as biome_layer
-from worldgen import climate as climate_layer
-from worldgen import elevation as elevation_layer
-from worldgen import hydrology as hydrology_layer
-from worldgen import ocean as ocean_layer
-from worldgen import sea as sea_layer
-from worldgen import tectonics as tectonics_layer
-from worldgen.ocean import OceanLayer
-from worldgen.tectonics import LithosphereState
-from worldgen.world import rect_world_hexes
+from kartogen._log import get_logger, timed_layer
+from kartogen.rng import RngHierarchy
+from kartogen.hex import Hex
+from kartogen import biome as biome_layer
+from kartogen import climate as climate_layer
+from kartogen import elevation as elevation_layer
+from kartogen import hydrology as hydrology_layer
+from kartogen import ocean as ocean_layer
+from kartogen import sea as sea_layer
+from kartogen import tectonics as tectonics_layer
+from kartogen.ocean import OceanLayer
+from kartogen.tectonics import LithosphereState
+from kartogen.world import rect_world_hexes
 
 _log = get_logger("pipeline")
-from worldgen.types import (
+from kartogen.types import (
     ClimateLayer,
     ElevationLayer,
     HexData,
     HydrologyLayer,
     SeaLayer,
-    WorldgenConfig,
+    KartogenConfig,
 )
 
 
@@ -66,7 +66,7 @@ class GeneratedWorld:
     so consumers can branch without inspecting every field.
     """
 
-    config: WorldgenConfig
+    config: KartogenConfig
     lithosphere: LithosphereState | None
     elevation: ElevationLayer | None
     sea: SeaLayer | None
@@ -79,9 +79,11 @@ class GeneratedWorld:
 
 
 def generate(
-    config: WorldgenConfig,
+    config: KartogenConfig,
     seed: int,
     stop_after: str | None = None,
+    *,
+    render_visuals: bool = False,
 ) -> GeneratedWorld:
     """Run the generation pipeline up to (and including) ``stop_after``.
 
@@ -89,6 +91,13 @@ def generate(
     string must be one of ``PIPELINE_STEPS``; downstream layers and the
     per-hex assembly are skipped. Pure function of (config, seed,
     stop_after) — the world footprint comes from ``config.world``.
+
+    ``render_visuals`` (default ``False``) toggles the tectonics
+    visualization payload: when ``False`` the polygon sim skips GIF-frame
+    capture and outline-polygon construction and ``lithosphere.raw_snapshot``
+    is ``None``. ``export_world`` sets it ``True`` so the
+    ``tectonic_sim_views`` artefacts can be rendered. The generated terrain
+    is identical either way.
     """
     stop = stop_after if stop_after is not None else PIPELINE_STEPS[-1]
     stop_ix = _step_index(stop)
@@ -122,6 +131,7 @@ def generate(
                 hexes, config.tectonics, config.hex_size_km, rng,
                 world_shape=config.world,
                 param_temperature=config.param_temperature,
+                render_visuals=render_visuals,
             )
 
     if stop_ix >= _step_index("elevation"):

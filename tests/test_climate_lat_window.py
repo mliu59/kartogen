@@ -12,26 +12,26 @@ import statistics
 from dataclasses import replace
 
 import pytest
-from worldgen import generate
-from worldgen.climate import (
+from kartogen import generate
+from kartogen.climate import (
     _WIND_BAND_HI_DEG,
     _WIND_BAND_LO_DEG,
     _zonal_wind_sign,
     hex_latitude_deg,
 )
-from worldgen.hex import Hex
-from worldgen.types import WorldgenConfig, WorldShape
+from kartogen.hex import Hex
+from kartogen.types import KartogenConfig, WorldShape
 
 pytestmark = pytest.mark.slow  # full generate()/sim per test
 def _shape(width_km: float, height_km: float) -> WorldShape:
     return WorldShape(width_km=width_km, height_km=height_km)
 
 
-def test_hex_latitude_endpoints_match_window(default_worldgen_config: WorldgenConfig) -> None:
+def test_hex_latitude_endpoints_match_window(default_kartogen_config: KartogenConfig) -> None:
     """A hex past +half_height_km in pixel-y clamps to map_lat_min;
     past -half_height_km clamps to map_lat_max."""
     cfg = replace(
-        default_worldgen_config,
+        default_kartogen_config,
         map_lat_min=30.0, map_lat_max=60.0,
     )
     # Hard-pick half_height_km = 50 km. With 5 km/hex and r=±10 at q=0:
@@ -47,10 +47,10 @@ def test_hex_latitude_endpoints_match_window(default_worldgen_config: WorldgenCo
 
 
 def test_shifting_window_north_cools_the_map(
-    default_worldgen_config: WorldgenConfig,
+    default_kartogen_config: KartogenConfig,
 ) -> None:
     """A map at lat 50–70 averages colder than the same map at lat 0–20."""
-    base = replace(default_worldgen_config, world=_shape(160.0, 160.0))
+    base = replace(default_kartogen_config, world=_shape(160.0, 160.0))
     tropical = replace(base, map_lat_min=0.0, map_lat_max=20.0)
     polar = replace(base, map_lat_min=50.0, map_lat_max=70.0)
     tropical_world = generate(config=tropical, seed=7)
@@ -69,11 +69,11 @@ def test_shifting_window_north_cools_the_map(
 
 
 def test_narrowing_window_flattens_temperature_gradient(
-    default_worldgen_config: WorldgenConfig,
+    default_kartogen_config: KartogenConfig,
 ) -> None:
     """A 2°-wide map has a much smaller north-south temperature spread than a
     full pole-to-pole map of the same physical dimensions."""
-    base = replace(default_worldgen_config, world=_shape(140.0, 140.0))
+    base = replace(default_kartogen_config, world=_shape(140.0, 140.0))
     full = replace(base, map_lat_min=-90.0, map_lat_max=90.0)
     narrow = replace(base, map_lat_min=39.0, map_lat_max=41.0)
     full_world = generate(config=full, seed=11)
@@ -91,7 +91,7 @@ def test_narrowing_window_flattens_temperature_gradient(
 
 
 def test_equator_window_keeps_centre_warm(
-    default_worldgen_config: WorldgenConfig,
+    default_kartogen_config: KartogenConfig,
 ) -> None:
     """A symmetric window centred on the equator gives the warmest temps
     at the centre (lat 0) and cooler at the edges.
@@ -100,7 +100,7 @@ def test_equator_window_keeps_centre_warm(
     mountain belts doesn't contaminate the latitudinal signal we're after.
     """
     cfg = replace(
-        default_worldgen_config,
+        default_kartogen_config,
         map_lat_min=-30.0, map_lat_max=30.0,
         world=_shape(120.0, 120.0),
     )
@@ -134,10 +134,10 @@ def test_wind_band_sign_matches_earth_zones() -> None:
     assert _zonal_wind_sign(89.0) == -1.0
 
 
-def test_lat_window_is_deterministic(default_worldgen_config: WorldgenConfig) -> None:
+def test_lat_window_is_deterministic(default_kartogen_config: KartogenConfig) -> None:
     """The same lat window + seed produces identical temperature output."""
     cfg = replace(
-        default_worldgen_config,
+        default_kartogen_config,
         map_lat_min=20.0, map_lat_max=50.0,
         world=_shape(80.0, 80.0),
     )

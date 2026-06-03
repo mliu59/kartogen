@@ -1,11 +1,11 @@
 """Deterministic 2D Perlin noise — scalar and numpy-vectorized.
 
 Seeded from either ``random.Random`` or ``np.random.Generator`` produced
-by the respective hierarchies in ``worldgen.rng`` / ``tectonic_sim.rng``.
+by the respective hierarchies in ``kartogen.rng`` / ``tectonic_sim.rng``.
 No global state. Used for:
 
   * scalar ``sample`` + ``fbm`` / ``ridged_fbm`` — per-hex elevation
-    detail in ``worldgen.elevation``;
+    detail in ``kartogen.elevation``;
   * vectorized ``sample_grid`` + ``fbm_grid_tileable`` — full-grid
     stamping on the sim torus (continental relief in
     ``tectonic_sim.polygon_sim.seeding``; the edge-smoothing alpha field

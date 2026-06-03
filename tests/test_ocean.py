@@ -6,18 +6,18 @@ import math
 from dataclasses import replace
 
 import pytest
-from worldgen import generate
-from worldgen.hex import Hex
-from worldgen.ocean import _current_direction_at
-from worldgen.types import WorldgenConfig, WorldShape
+from kartogen import generate
+from kartogen.hex import Hex
+from kartogen.ocean import _current_direction_at
+from kartogen.types import KartogenConfig, WorldShape
 
 pytestmark = pytest.mark.slow  # full generate()/sim per test
 def test_ocean_layer_runs_and_is_deterministic(
-    default_worldgen_config: WorldgenConfig,
+    default_kartogen_config: KartogenConfig,
 ) -> None:
     """Identical (seed, config) produces identical ocean current fields."""
-    a = generate(config=replace(default_worldgen_config, world=WorldShape(width_km=100.0, height_km=100.0)), seed=42)
-    b = generate(config=replace(default_worldgen_config, world=WorldShape(width_km=100.0, height_km=100.0)), seed=42)
+    a = generate(config=replace(default_kartogen_config, world=WorldShape(width_km=100.0, height_km=100.0)), seed=42)
+    b = generate(config=replace(default_kartogen_config, world=WorldShape(width_km=100.0, height_km=100.0)), seed=42)
     for h in a.hexes:
         assert (
             a.ocean.current_temp_anomaly.get(h, 0.0)
@@ -31,10 +31,10 @@ def test_ocean_layer_runs_and_is_deterministic(
 
 
 def test_distance_to_ocean_zero_at_ocean(
-    default_worldgen_config: WorldgenConfig,
+    default_kartogen_config: KartogenConfig,
 ) -> None:
     """Ocean hexes are at distance 0 from the ocean (themselves)."""
-    world = generate(config=replace(default_worldgen_config, world=WorldShape(width_km=100.0, height_km=100.0)), seed=42)
+    world = generate(config=replace(default_kartogen_config, world=WorldShape(width_km=100.0, height_km=100.0)), seed=42)
     for h, d in world.hexes.items():
         if d.is_ocean:
             assert world.ocean.distance_to_ocean_km[h] == 0.0
@@ -43,11 +43,11 @@ def test_distance_to_ocean_zero_at_ocean(
 
 
 def test_distance_to_ocean_monotone_increases_inland(
-    default_worldgen_config: WorldgenConfig,
+    default_kartogen_config: KartogenConfig,
 ) -> None:
     """For each land hex, no neighbour can be more than one hex-step closer
     to the ocean than this hex (BFS distance invariant)."""
-    world = generate(config=replace(default_worldgen_config, world=WorldShape(width_km=100.0, height_km=100.0)), seed=42)
+    world = generate(config=replace(default_kartogen_config, world=WorldShape(width_km=100.0, height_km=100.0)), seed=42)
     step_km = world.config.hex_size_km * math.sqrt(3.0)
     epsilon = 1e-6
     for h, d in world.hexes.items():
@@ -64,7 +64,7 @@ def test_distance_to_ocean_monotone_increases_inland(
 
 
 def test_gyres_rotate_by_hemisphere(
-    default_worldgen_config: WorldgenConfig,
+    default_kartogen_config: KartogenConfig,
 ) -> None:
     """Use a wide pole-to-pole window so both hemispheres have ocean. NH ocean
     cells in a gyre should swirl clockwise; SH counter-clockwise.
@@ -72,7 +72,7 @@ def test_gyres_rotate_by_hemisphere(
     Test: for ocean hexes far from a gyre centre, the current direction
     should be tangential (perpendicular to the radial), with the right sign.
     """
-    cfg = replace(default_worldgen_config, map_lat_min=-90.0, map_lat_max=90.0)
+    cfg = replace(default_kartogen_config, map_lat_min=-90.0, map_lat_max=90.0)
     world = generate(config=replace(cfg, world=WorldShape(width_km=140.0, height_km=140.0)), seed=42)
     # Sanity: there are at least a few ocean hexes with non-zero current.
     nonzero = [
@@ -134,7 +134,7 @@ def test_gyre_rotation_matches_earth_convention() -> None:
 
 
 def test_nh_gyre_warm_west_cold_east(
-    default_worldgen_config: WorldgenConfig,
+    default_kartogen_config: KartogenConfig,
 ) -> None:
     """The defining Earth pattern: in the NH, the west side of a gyre carries
     warm currents poleward (Gulf Stream / Kuroshio), and the east side carries
@@ -145,13 +145,13 @@ def test_nh_gyre_warm_west_cold_east(
     a *positive* (warm) anomaly, the east-side ones (rx > 0) a *negative*
     (cold) one. We allow noise but the *sign* of the average must agree.
     """
-    cfg = replace(default_worldgen_config, map_lat_min=-90.0, map_lat_max=90.0)
+    cfg = replace(default_kartogen_config, map_lat_min=-90.0, map_lat_max=90.0)
     world = generate(config=replace(cfg, world=WorldShape(width_km=200.0, height_km=200.0)), seed=42)
     # Find a NH gyre's centroid by averaging the hex xy positions of all
     # ocean hexes whose latitude is > 0 (NH) and whose gyre_id matches one we
     # pick. Simplest: pick the gyre_id that owns the most NH ocean hexes.
-    from worldgen.climate import hex_latitude_deg
-    from worldgen.world import hex_to_xy_km, map_half_extents_km
+    from kartogen.climate import hex_latitude_deg
+    from kartogen.world import hex_to_xy_km, map_half_extents_km
     _, _half_h = map_half_extents_km(world.hexes.keys(), cfg.hex_size_km)
 
     nh_ocean_by_gyre: dict[int, list[Hex]] = {}
@@ -200,11 +200,11 @@ def test_nh_gyre_warm_west_cold_east(
 
 
 def test_warm_and_cold_currents_coexist(
-    default_worldgen_config: WorldgenConfig,
+    default_kartogen_config: KartogenConfig,
 ) -> None:
     """A full pole-to-pole map should produce *both* warm (positive) and cold
     (negative) ocean anomalies, somewhere in the world."""
-    cfg = replace(default_worldgen_config, map_lat_min=-90.0, map_lat_max=90.0)
+    cfg = replace(default_kartogen_config, map_lat_min=-90.0, map_lat_max=90.0)
     world = generate(config=replace(cfg, world=WorldShape(width_km=140.0, height_km=140.0)), seed=42)
     anomalies = [
         world.ocean.current_temp_anomaly[h]
@@ -216,12 +216,12 @@ def test_warm_and_cold_currents_coexist(
 
 
 def test_coastal_anomaly_decays_inland(
-    default_worldgen_config: WorldgenConfig,
+    default_kartogen_config: KartogenConfig,
 ) -> None:
     """The coastal temperature anomaly attenuates with distance from the
     ocean: average |anomaly| in hexes within 100 km of a coast is larger
     than in hexes 800 km+ inland."""
-    world = generate(config=replace(default_worldgen_config, world=WorldShape(width_km=200.0, height_km=200.0)), seed=42)
+    world = generate(config=replace(default_kartogen_config, world=WorldShape(width_km=200.0, height_km=200.0)), seed=42)
     near_band: list[float] = []
     far_band: list[float] = []
     for h, d in world.hexes.items():
@@ -243,12 +243,12 @@ def test_coastal_anomaly_decays_inland(
 
 
 def test_continentality_dries_interior_precipitation(
-    default_worldgen_config: WorldgenConfig,
+    default_kartogen_config: KartogenConfig,
 ) -> None:
     """Land hexes far from any ocean receive less precipitation on average
     than coastal land hexes (controlling for nothing else — at the scale of
     the medium_world fixture the effect is strong enough to dominate)."""
-    world = generate(config=replace(default_worldgen_config, world=WorldShape(width_km=200.0, height_km=200.0)), seed=42)
+    world = generate(config=replace(default_kartogen_config, world=WorldShape(width_km=200.0, height_km=200.0)), seed=42)
     near: list[float] = []
     far: list[float] = []
     for h, d in world.hexes.items():

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from worldgen.hex import Hex
-from worldgen.types import ElevationLayer, SeaLayer
+from kartogen.hex import Hex
+from kartogen.types import ElevationLayer, SeaLayer
 
 
 def compute(elevation: ElevationLayer) -> SeaLayer:

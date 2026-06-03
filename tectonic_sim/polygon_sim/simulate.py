@@ -56,7 +56,8 @@ from tectonic_sim.polygon_sim.viz import (
 
 def simulate_rigid_polygon(
     domain: WorldRect, sim_config, seed: int,
-    capture_every: int = 0, frame_upscale: int = 4):
+    capture_every: int = 0, frame_upscale: int = 4,
+    render_visuals: bool = True):
     """Run the simulation.
 
     Returns ``(plates, owner, crust, age, thick, cell_km, timeline,
@@ -65,7 +66,17 @@ def simulate_rigid_polygon(
     ``capture_every == 0``. All output (returned ndarrays and captured
     frames) is the full sim domain — callers that want a sub-region
     apply their own slicing.
+
+    ``render_visuals`` gates all visualization-only work: when ``False``,
+    per-tick GIF frames are not captured (regardless of ``capture_every``)
+    and the per-plate alpha-complex outline polygons are not built. The
+    physics arrays (owner / crust / age / thick) are produced either way —
+    only the render payload is skipped. Set it ``False`` for plain
+    generation; ``True`` only when the caller will render the
+    ``tectonic_sim_views`` artefacts.
     """
+    if not render_visuals:
+        capture_every = 0  # no GIF frame capture when visuals aren't needed
     plates, cell_km, t0_snapshot = _initial_state(domain, sim_config, seed)
     gy, gx, _ = _grid_dims(domain, sim_config)
     cell_xy = _cell_centres(gy, gx, cell_km)
@@ -358,9 +369,11 @@ def simulate_rigid_polygon(
     }
 
     # Build the per-plate alpha-complex ONCE, at the end. It's only
-    # consumed by polygons.png at render time — building it every
-    # tick during the sim was wasted work.
-    _build_polygons_for_render(plates, domain, cell_xy, cell_km, sim_config)
+    # consumed by polygons.png at render time — building it every tick
+    # during the sim was wasted work, and skipping it entirely when no
+    # visuals are requested saves the whole Delaunay pass.
+    if render_visuals:
+        _build_polygons_for_render(plates, domain, cell_xy, cell_km, sim_config)
     owner, crust, age, thick = _flatten_state(plates, gy, gx)
     return (
         plates, owner, crust, age, thick, cell_km, timeline,

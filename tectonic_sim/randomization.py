@@ -7,7 +7,7 @@ from ``Normal(base_value, T × hardcoded_std)``, clipped to a safe range
 and rounded to int if applicable.
 
 The design is two-layered so the same machinery can be reused for other
-configs later (the obvious next case is ``WorldgenConfig``):
+configs later (the obvious next case is ``KartogenConfig``):
 
   - **Layer 1: a generic helper.** ``randomize_dataclass_fields(base,
     randomizers, param_temperature, rng)`` walks a tuple of
@@ -16,8 +16,8 @@ configs later (the obvious next case is ``WorldgenConfig``):
 
   - **Layer 2: per-config public wrapper.** ``randomize_sim_config(
     base, param_temperature, seed)`` hides the generic helper and
-    binds the ``SimConfig``-specific spec tuple. Worldgen would add
-    its own ``randomize_worldgen_config`` later that delegates to the
+    binds the ``SimConfig``-specific spec tuple. Kartogen would add
+    its own ``randomize_kartogen_config`` later that delegates to the
     same Layer 1.
 
 **Std + clamp are relative to the config value.** The user only

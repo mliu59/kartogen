@@ -1,7 +1,7 @@
 """Test fixtures for the terrain generation suite.
 
-Loads the default world-gen parameters from ``config/worldgen.toml`` so tests
-track real config changes. Test worlds override ``WorldgenConfig.world``
+Loads the default world-gen parameters from ``config/kartogen.toml`` so tests
+track real config changes. Test worlds override ``KartogenConfig.world``
 with a smaller ``WorldShape`` via ``dataclasses.replace`` so we don't pay
 for the full default world dimensions in every test.
 """
@@ -12,18 +12,18 @@ import dataclasses
 from pathlib import Path
 
 import pytest
-from worldgen import generate
-from worldgen.config_loader import load_worldgen_config
-from worldgen.pipeline import GeneratedWorld
-from worldgen.types import WorldgenConfig, WorldShape
+from kartogen import generate
+from kartogen.config_loader import load_kartogen_config
+from kartogen.pipeline import GeneratedWorld
+from kartogen.types import KartogenConfig, WorldShape
 
 
 def _with_shape(
-    cfg: WorldgenConfig, width_km: float, height_km: float,
-) -> WorldgenConfig:
+    cfg: KartogenConfig, width_km: float, height_km: float,
+) -> KartogenConfig:
     """Return a copy of ``cfg`` with its ``world`` shape replaced.
 
-    The edge-smoothing override lives on ``default_worldgen_config`` so
+    The edge-smoothing override lives on ``default_kartogen_config`` so
     every downstream fixture and every test that builds a world from
     that fixture inherits it — no per-fixture handling needed here.
     """
@@ -33,8 +33,8 @@ def _with_shape(
 
 
 @pytest.fixture(scope="session")
-def default_worldgen_config() -> WorldgenConfig:
-    """Worldgen parameters loaded from ``config/worldgen.toml`` — with
+def default_kartogen_config() -> KartogenConfig:
+    """Kartogen parameters loaded from ``config/kartogen.toml`` — with
     the non-physics edge-smoothing pass DISABLED.
 
     Edge smoothing is a Perlin-modulated Gaussian blur on crust
@@ -42,17 +42,17 @@ def default_worldgen_config() -> WorldgenConfig:
     defaults (kernel ≈25 km) are correct for production-sized worlds
     (≥1000 km) but become catastrophic on the tiny worlds these tests
     use (~100-300 km) — sigma in cells gets large enough relative to
-    the grid to flatten land/ocean diversity. Every other worldgen
+    the grid to flatten land/ocean diversity. Every other kartogen
     test treats thickness as the un-smoothed simulation output; we
     keep that contract by turning smoothing off here.
 
     The smoothing's own correctness lives in
     ``tectonic_sim/tests/test_edge_smoothing.py`` (unit tests of the
     operator). End-to-end smoothing behaviour is exercised by the
-    ``python -m worldgen`` smoke runs on the production-sized config.
+    ``python -m kartogen`` smoke runs on the production-sized config.
     """
-    cfg = load_worldgen_config(
-        Path(__file__).parent.parent / "config" / "worldgen.toml"
+    cfg = load_kartogen_config(
+        Path(__file__).parent.parent / "config" / "kartogen.toml"
     )
     return dataclasses.replace(
         cfg,
@@ -65,21 +65,21 @@ def default_worldgen_config() -> WorldgenConfig:
 
 
 @pytest.fixture(scope="session")
-def small_world_config(default_worldgen_config: WorldgenConfig) -> WorldgenConfig:
+def small_world_config(default_kartogen_config: KartogenConfig) -> KartogenConfig:
     """Small (120×120 km) world config for fast tests. ~400-500 hexes at the
     default 5 km hex size — comparable to the previous radius=12 hex world."""
-    return _with_shape(default_worldgen_config, width_km=120.0, height_km=120.0)
+    return _with_shape(default_kartogen_config, width_km=120.0, height_km=120.0)
 
 
 @pytest.fixture(scope="session")
-def medium_world_config(default_worldgen_config: WorldgenConfig) -> WorldgenConfig:
+def medium_world_config(default_kartogen_config: KartogenConfig) -> KartogenConfig:
     """Medium (300×300 km) world config. ~2800 hexes at 5 km/hex —
     comparable to the previous radius=30 hex world."""
-    return _with_shape(default_worldgen_config, width_km=300.0, height_km=300.0)
+    return _with_shape(default_kartogen_config, width_km=300.0, height_km=300.0)
 
 
 @pytest.fixture(scope="session")
-def small_world(small_world_config: WorldgenConfig) -> GeneratedWorld:
+def small_world(small_world_config: KartogenConfig) -> GeneratedWorld:
     """A small (120×120 km) world generated with seed 42.
 
     Session-scoped so we only pay the generation cost once. Small enough
@@ -90,6 +90,6 @@ def small_world(small_world_config: WorldgenConfig) -> GeneratedWorld:
 
 
 @pytest.fixture(scope="session")
-def medium_world(medium_world_config: WorldgenConfig) -> GeneratedWorld:
+def medium_world(medium_world_config: KartogenConfig) -> GeneratedWorld:
     """A medium (300×300 km) world. Use sparingly — slower."""
     return generate(config=medium_world_config, seed=42)

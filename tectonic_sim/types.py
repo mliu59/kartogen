@@ -3,7 +3,7 @@
 Public surface:
 
   - ``WorldRect`` — toroidal simulation domain in km
-  - ``SimConfig`` — physics tunables (read by polygon_sim + worldgen bridge)
+  - ``SimConfig`` — physics tunables (read by polygon_sim + kartogen bridge)
   - ``CRUST_CONTINENTAL`` / ``CRUST_OCEANIC`` — int8 codes
   - ``crust_type_code`` / ``crust_type_name`` — string ↔ int
 

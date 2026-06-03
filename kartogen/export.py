@@ -35,11 +35,11 @@ from typing import Any
 
 import numpy as np
 
-from worldgen._log import configure_logging
-from worldgen.config_loader import load_worldgen_config
-from worldgen.hex import Hex
-from worldgen.pipeline import GeneratedWorld, PIPELINE_STEPS, generate
-from worldgen.types import WorldgenConfig
+from kartogen._log import configure_logging
+from kartogen.config_loader import load_kartogen_config
+from kartogen.hex import Hex
+from kartogen.pipeline import GeneratedWorld, PIPELINE_STEPS, generate
+from kartogen.types import KartogenConfig
 
 
 @dataclass(frozen=True)
@@ -155,7 +155,7 @@ def load_snapshot(path: Path) -> WorldSnapshot:
 
 # Standard renderable layers (in order). Plate structure is inspected
 # through the ``tectonic_sim_views`` renders (partition / crust /
-# topography), not as a per-hex worldgen layer.
+# topography), not as a per-hex kartogen layer.
 DEFAULT_RENDER_LAYERS: tuple[str, ...] = (
     "elevation",
     "temperature",
@@ -178,7 +178,7 @@ def _layers_available_at(stop_after: str, candidates: tuple[str, ...]) -> list[s
     required step. A layer is kept when the index of its required step in
     ``PIPELINE_STEPS`` is ≤ the index of ``stop_after``.
     """
-    from worldgen.preview import LAYER_REQUIRES  # lazy: avoids Pillow import here.
+    from kartogen.preview import LAYER_REQUIRES  # lazy: avoids Pillow import here.
 
     stop_ix = PIPELINE_STEPS.index(stop_after)
     out: list[str] = []
@@ -192,7 +192,7 @@ def _layers_available_at(stop_after: str, candidates: tuple[str, ...]) -> list[s
 def _dump_run_config(
     out_dir: Path,
     *,
-    config: WorldgenConfig,
+    config: KartogenConfig,
     seed: int,
     cli_args: dict | None,
     timestamp: str,
@@ -200,7 +200,7 @@ def _dump_run_config(
 ) -> None:
     """Write ``config.json`` (full reproducibility snapshot) + verbatim
     copy of the source TOML into ``out_dir``. Ported from the rigid-
-    polygon prototype so worldgen exports gain the same "reproduce-from-
+    polygon prototype so kartogen exports gain the same "reproduce-from-
     output-dir-alone" guarantee.
     """
     import dataclasses
@@ -235,7 +235,7 @@ def _dump_run_config(
                 "height": config.world.height_km,
             },
         },
-        "worldgen_config": _to_jsonable(config),
+        "kartogen_config": _to_jsonable(config),
         "config_source_path": str(config_path) if config_path else None,
     }
     (out_dir / "config.json").write_text(
@@ -243,7 +243,7 @@ def _dump_run_config(
     )
     if config_path is not None:
         try:
-            shutil.copy2(config_path, out_dir / "worldgen.source.toml")
+            shutil.copy2(config_path, out_dir / "kartogen.source.toml")
         except OSError as exc:
             # Don't fail the export just because the source TOML
             # couldn't be copied (e.g. read-only filesystem on Windows).
@@ -305,9 +305,9 @@ def _export_polygon_views(out_dir: Path, snap: dict) -> None:
 
     All views show the FULL sim domain (the larger torus on which the
     simulation actually ran), including the buffer region outside the
-    worldgen world rectangle. This makes plate drift, hotspots, and
+    kartogen world rectangle. This makes plate drift, hotspots, and
     suture formation visible everywhere — not just inside the world
-    crop. Worldgen's own per-hex layers (``layers/*.png``) remain
+    crop. Kartogen's own per-hex layers (``layers/*.png``) remain
     world-sized because they're rendered from the hex grid directly.
     """
     from tectonic_sim.polygon_sim import (
@@ -337,7 +337,7 @@ def _export_polygon_views(out_dir: Path, snap: dict) -> None:
 
     gy, gx = owner.shape
     cap = (
-        f"WORLDGEN POLYGON  sim {gx}×{gy}  "
+        f"KARTOGEN POLYGON  sim {gx}×{gy}  "
         f"world {int(round(world_domain.width_km))}×"
         f"{int(round(world_domain.height_km))} km  "
         f"cell={cell_km:.1f}km  plates={sum(1 for p in plates if p.alive)}  "
@@ -536,7 +536,7 @@ def _export_edge_smoothing_views(
 
 
 def export_world(
-    config: WorldgenConfig,
+    config: KartogenConfig,
     seed: int,
     output_root: Path,
     render_layers: tuple[str, ...] = DEFAULT_RENDER_LAYERS,
@@ -565,11 +565,15 @@ def export_world(
             ...
           drift.gif
 
-    Requires Pillow (the ``[preview]`` extra).
+    Requires Pillow (a core dependency).
     """
-    from worldgen import preview  # lazy: Pillow is only needed for rendering.
+    from kartogen import preview  # lazy: Pillow is only needed for rendering.
 
-    world = generate(config=config, seed=seed, stop_after=stop_after)
+    # render_visuals=True so the tectonics sim emits its GIF frames + outline
+    # polygons for the tectonic_sim_views/ artefacts (skipped by plain generate()).
+    world = generate(
+        config=config, seed=seed, stop_after=stop_after, render_visuals=True,
+    )
     snap = serialize_world(world)
 
     timestamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -599,7 +603,7 @@ def export_world(
     # that produced them. No top-level drift.gif.
 
     # --- Reproducibility snapshot (ported from prototype). ---
-    # Writes config.json (CLI args + resolved WorldgenConfig + module
+    # Writes config.json (CLI args + resolved KartogenConfig + module
     # tunables touched by --temp + downstream seed) and copies the
     # source TOML verbatim — every run dir is fully self-describing.
     _dump_run_config(
@@ -655,9 +659,9 @@ def _find_py_spy() -> str | None:
 
 
 def _exec_under_pyspy(args: argparse.Namespace) -> None:
-    """Re-exec the current ``python -m worldgen`` invocation under
+    """Re-exec the current ``python -m kartogen`` invocation under
     py-spy ``record`` mode, with ``--profile`` stripped so the child
-    runs the normal worldgen path. Writes the flame-graph SVG to
+    runs the normal kartogen path. Writes the flame-graph SVG to
     ``<out>/profiles/profile_<timestamp>_s<seed>.svg``.
     """
     import datetime as _dt
@@ -679,8 +683,8 @@ def _exec_under_pyspy(args: argparse.Namespace) -> None:
     timestamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     out_svg = out_dir / f"profile_{timestamp}_s{args.seed}.svg"
 
-    # Re-build the worldgen invocation without the profile flags.
-    target_cmd: list[str] = [sys.executable, "-m", "worldgen"]
+    # Re-build the kartogen invocation without the profile flags.
+    target_cmd: list[str] = [sys.executable, "-m", "kartogen"]
     target_cmd += ["--seed", str(args.seed)]
     target_cmd += ["--config", str(args.config)]
     target_cmd += ["--out", str(args.out)]
@@ -701,7 +705,7 @@ def _exec_under_pyspy(args: argparse.Namespace) -> None:
         "--",
         *target_cmd,
     ]
-    print(f"Profiling worldgen under py-spy @ {args.profile_sample_rate} Hz")
+    print(f"Profiling kartogen under py-spy @ {args.profile_sample_rate} Hz")
     print(f"  command: {' '.join(pyspy_cmd)}")
     print(f"  flame graph -> {out_svg}")
     result = subprocess.run(pyspy_cmd, check=False)
@@ -726,19 +730,19 @@ def _exec_under_pyspy(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    """CLI entry point. Invoked by ``python -m worldgen``."""
+    """CLI entry point. Invoked by ``python -m kartogen``."""
     parser = argparse.ArgumentParser(
         description="Generate a world and export snapshot + per-layer PNGs.",
-        prog="python -m worldgen",
+        prog="python -m kartogen",
     )
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--config", type=Path, default=Path("config/worldgen.toml"))
+    parser.add_argument("--config", type=Path, default=Path("config/kartogen.toml"))
     parser.add_argument("--out", type=Path, default=Path("exports"))
     parser.add_argument("--hex-px", type=float, default=6.0)
     parser.add_argument(
         "--param-temperature", type=float, default=None,
         help=(
-            "Override WorldgenConfig.param_temperature. 0 = fully deterministic; "
+            "Override KartogenConfig.param_temperature. 0 = fully deterministic; "
             "values >0 perturb subsystem physics (currently just tectonics) "
             "with spread proportional to T. Default: use the value from the "
             "config file."
@@ -754,12 +758,12 @@ def main() -> None:
     )
     parser.add_argument(
         "-q", "--quiet", action="store_true",
-        help="Silence all worldgen logs and progress bars.",
+        help="Silence all kartogen logs and progress bars.",
     )
     parser.add_argument(
         "--profile", action="store_true",
         help=(
-            "Re-exec the worldgen run under py-spy to record a wall-clock "
+            "Re-exec the kartogen run under py-spy to record a wall-clock "
             "flame graph (SVG) into <out>/profiles/ alongside the export. "
             "Requires the [dev] extra (``pip install -e .[dev]``)."
         ),
@@ -785,7 +789,7 @@ def main() -> None:
         # progress bars, and chatty per-hex details.
         configure_logging(logging.DEBUG)
 
-    cfg = load_worldgen_config(args.config)
+    cfg = load_kartogen_config(args.config)
     if args.param_temperature is not None:
         from dataclasses import replace as _dc_replace
         cfg = _dc_replace(cfg, param_temperature=float(args.param_temperature))

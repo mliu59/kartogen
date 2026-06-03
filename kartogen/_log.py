@@ -1,11 +1,11 @@
-"""Logging + progress-bar plumbing for the worldgen pipeline.
+"""Logging + progress-bar plumbing for the kartogen pipeline.
 
 Library default is silent (level WARNING). The CLI calls
 ``configure_logging(logging.INFO)`` on startup so end-users see per-layer
 timing and progress bars. Tests don't call it, so they stay quiet.
 
 ``progress(iterable, ...)`` is a thin wrapper over ``tqdm.auto.tqdm`` that
-self-disables when the worldgen logger isn't at INFO or below, so library
+self-disables when the kartogen logger isn't at INFO or below, so library
 users who haven't configured logging don't get stray bars on stderr.
 """
 
@@ -19,12 +19,12 @@ from typing import TypeVar
 
 from tqdm.auto import tqdm
 
-_ROOT_LOGGER_NAME = "worldgen"
+_ROOT_LOGGER_NAME = "kartogen"
 T = TypeVar("T")
 
 
 def get_logger(name: str) -> logging.Logger:
-    """Return a child of the ``worldgen`` namespace logger."""
+    """Return a child of the ``kartogen`` namespace logger."""
     if name == _ROOT_LOGGER_NAME:
         return logging.getLogger(_ROOT_LOGGER_NAME)
     if name.startswith(_ROOT_LOGGER_NAME + "."):
@@ -33,7 +33,7 @@ def get_logger(name: str) -> logging.Logger:
 
 
 def configure_logging(level: int = logging.INFO) -> None:
-    """Idempotent setup of the ``worldgen`` logger.
+    """Idempotent setup of the ``kartogen`` logger.
 
     Adds a single StreamHandler (stderr) the first time it's called; on
     subsequent calls just updates the level. CLI uses this on startup;
@@ -43,19 +43,19 @@ def configure_logging(level: int = logging.INFO) -> None:
     logger = logging.getLogger(_ROOT_LOGGER_NAME)
     logger.setLevel(level)
     # Avoid double-handlers if configure_logging is called twice.
-    if not any(getattr(h, "_worldgen_handler", False) for h in logger.handlers):
+    if not any(getattr(h, "_kartogen_handler", False) for h in logger.handlers):
         handler = logging.StreamHandler()
         handler.setFormatter(
             logging.Formatter("[%(name)s %(levelname)s] %(message)s")
         )
-        handler._worldgen_handler = True  # type: ignore[attr-defined]
+        handler._kartogen_handler = True  # type: ignore[attr-defined]
         logger.addHandler(handler)
     # Don't propagate up to root — keeps test output clean.
     logger.propagate = False
 
 
 def _progress_enabled() -> bool:
-    """tqdm bars only show when the worldgen logger is at INFO or below."""
+    """tqdm bars only show when the kartogen logger is at INFO or below."""
     return get_logger(_ROOT_LOGGER_NAME).isEnabledFor(logging.INFO)
 
 

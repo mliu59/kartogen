@@ -3,13 +3,13 @@ elevation, coast and water overrides."""
 
 from __future__ import annotations
 
-from worldgen.hex import Hex
-from worldgen.types import (
+from kartogen.hex import Hex
+from kartogen.types import (
     ClimateLayer,
     ElevationLayer,
     HydrologyLayer,
     SeaLayer,
-    WorldgenConfig,
+    KartogenConfig,
 )
 
 DEEP_OCEAN_DEPTH = 0.15  # elevation below sea_level by more than this → deep_ocean
@@ -18,7 +18,7 @@ DEEP_OCEAN_DEPTH = 0.15  # elevation below sea_level by more than this → deep_
 def _whittaker(
     temp_c: float,
     precip_mm: float,
-    config: WorldgenConfig,
+    config: KartogenConfig,
 ) -> str:
     """Return the lowland biome name for a (temperature, precipitation) pair.
 
@@ -56,7 +56,7 @@ def assign(
     sea: SeaLayer,
     climate: ClimateLayer,
     hydrology: HydrologyLayer,
-    config: WorldgenConfig,
+    config: KartogenConfig,
 ) -> dict[Hex, str]:
     """Assign a terrain/biome name per hex with priority:
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from worldgen.hex import Hex
+from kartogen.hex import Hex
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,11 +49,11 @@ class HexData:
     gyre_id: int | None
 
 
-# TectonicsConfig used to be a worldgen-side dataclass that duplicated
+# TectonicsConfig used to be a kartogen-side dataclass that duplicated
 # the physics tunables from ``tectonic_sim.SimConfig``. Post-refactor,
 # the tectonic_sim module owns its own TOML (``config/tectonic_sim.toml``)
-# and SimConfig dataclass, and worldgen loads it directly. We keep the
-# name as a transparent alias so existing worldgen callsites that read
+# and SimConfig dataclass, and kartogen loads it directly. We keep the
+# name as a transparent alias so existing kartogen callsites that read
 # ``config.tectonics.X`` continue to work unchanged.
 from tectonic_sim.types import SimConfig as TectonicsConfig  # noqa: F401
 
@@ -67,7 +67,7 @@ class WorldShape:
     The map renders as a rectangle of these km dimensions; the hex grid
     fills it as tightly as the integer axial lattice allows.
 
-    Configured via ``[worldgen.world] width_km, height_km``.
+    Configured via ``[kartogen.world] width_km, height_km``.
     """
 
     width_km: float
@@ -120,10 +120,10 @@ class OceanConfig:
 
 
 @dataclass(frozen=True)
-class WorldgenConfig:
+class KartogenConfig:
     """Parameters for the world generation pipeline.
 
-    All fields come from the ``[worldgen.*]`` config sections. Scale-dependent
+    All fields come from the ``[kartogen.*]`` config sections. Scale-dependent
     parameters are stored in **physical units** (km, km², mm per km of land
     fetch, etc.) and converted to hex-based units via ``hex_size_km`` at use
     time. This means changing ``hex_size_km`` automatically rescales noise
@@ -141,7 +141,7 @@ class WorldgenConfig:
     #   0 (default) → deterministic run from the configured TectonicsConfig.
     #   > 0         → each tectonic_sim field is drawn from a Normal around
     #                 its configured value, with std × param_temperature.
-    # The same hyperparameter is intended to extend to other worldgen
+    # The same hyperparameter is intended to extend to other kartogen
     # subsystems (climate priors, ocean coefficients, etc.) in the future;
     # for now it only affects the tectonics simulation. See
     # ``tectonic_sim.randomize_sim_config``.

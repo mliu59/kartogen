@@ -1,7 +1,7 @@
 """L0b tectonics layer — thin adaptor over ``tectonic_sim.polygon_sim``.
 
 ``simulate_tectonics`` delegates unconditionally to
-``worldgen.tectonics_cast.simulate_tectonics_via_continuous_sim``. This
+``kartogen.tectonics_cast.simulate_tectonics_via_continuous_sim``. This
 module owns the per-hex result types the downstream layers consume —
 ``LithosphereColumn``, ``LithosphereState``, ``TectonicPlate`` — plus
 the closed-form elevation map ``column_to_elevation_km(col, cfg)`` and
@@ -18,14 +18,14 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from worldgen.hex import Hex
-from worldgen.types import TectonicsConfig
+from kartogen.hex import Hex
+from kartogen.types import TectonicsConfig
 
 if TYPE_CHECKING:
-    from worldgen.rng import RngHierarchy
+    from kartogen.rng import RngHierarchy
 
 # Crust-type tags carried on every ``LithosphereColumn`` (and the polygon
-# sim's per-cell crust). The strings are the canonical worldgen values.
+# sim's per-cell crust). The strings are the canonical kartogen values.
 PLATE_TYPE_CONTINENTAL = "continental"
 PLATE_TYPE_OCEANIC = "oceanic"
 
@@ -79,7 +79,7 @@ class LithosphereState:
     plates: tuple[TectonicPlate, ...]
     # Raw polygon-sim output, preserved for export-time renderers
     # (tectonic_sim_views/). Typed as ``object`` to avoid a circular
-    # import of ``polygon_sim.PolygonPlate`` at worldgen-init time. The
+    # import of ``polygon_sim.PolygonPlate`` at kartogen-init time. The
     # value is a dict with keys ``plates``, ``owner``/``crust``/``age``/
     # ``thickness`` ((gy, gx) ndarrays), ``cell_km``, ``hotspots``,
     # ``frames``/``frames_thickness``/``frames_topography`` (GIF panels),
@@ -119,19 +119,23 @@ def simulate_tectonics(
     *,
     world_shape=None,                   # type: ignore[no-untyped-def]
     param_temperature: float = 0.0,
+    render_visuals: bool = False,
 ) -> LithosphereState:
     """Run the tectonics simulation and return a ``LithosphereState``.
 
     Thin adaptor: delegates to
-    ``worldgen.tectonics_cast.simulate_tectonics_via_continuous_sim``. The
+    ``kartogen.tectonics_cast.simulate_tectonics_via_continuous_sim``. The
     polygon sim seeds its own plates from ``tectonic_sim.toml``.
     ``world_shape`` is the simulation footprint; if ``None``, it's derived
     from the world-hex set's bounding box. ``param_temperature`` > 0
-    randomizes the loaded ``SimConfig`` before the run.
+    randomizes the loaded ``SimConfig`` before the run. ``render_visuals``
+    populates ``LithosphereState.raw_snapshot`` with the export-time
+    rendering payload (GIF frames + outline polygons); leave it ``False``
+    for plain generation.
 
     Pure function of all inputs.
     """
-    from worldgen.tectonics_cast import simulate_tectonics_via_continuous_sim
+    from kartogen.tectonics_cast import simulate_tectonics_via_continuous_sim
 
     if world_shape is None:
         world_shape = _world_shape_from_hexes(world_hexes_iter, hex_size_km)
@@ -145,6 +149,7 @@ def simulate_tectonics(
         hex_size_km,
         seed,
         param_temperature=param_temperature,
+        render_visuals=render_visuals,
     )
 
 
@@ -157,7 +162,7 @@ def _world_shape_from_hexes(
     explicit ``WorldShape`` — e.g. tests that drive the function
     directly with just hexes + config.
     """
-    from worldgen.types import WorldShape
+    from kartogen.types import WorldShape
 
     if not world_hexes:
         return WorldShape(width_km=100.0, height_km=100.0)

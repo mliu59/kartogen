@@ -5,11 +5,11 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
-from worldgen import biome as biome_layer
-from worldgen import generate
-from worldgen.pipeline import GeneratedWorld
-from worldgen.terrain import TERRAIN_NAMES
-from worldgen.types import WorldgenConfig
+from kartogen import biome as biome_layer
+from kartogen import generate
+from kartogen.pipeline import GeneratedWorld
+from kartogen.terrain import TERRAIN_NAMES
+from kartogen.types import KartogenConfig
 
 pytestmark = pytest.mark.slow  # full generate()/sim per test
 def test_every_biome_name_is_known(small_world: GeneratedWorld) -> None:
@@ -21,7 +21,7 @@ def test_every_biome_name_is_known(small_world: GeneratedWorld) -> None:
 
 
 @pytest.fixture(scope="module")
-def pole_to_pole_world(medium_world_config: WorldgenConfig) -> GeneratedWorld:
+def pole_to_pole_world(medium_world_config: KartogenConfig) -> GeneratedWorld:
     """A medium world with a true pole-to-pole latitude window so polar
     hexes actually sit at near-90° latitude. (The bundled config uses an
     asymmetric mid-latitude slice.)"""
@@ -35,8 +35,8 @@ def test_polar_hexes_are_tundra_or_snow_or_water(
     """At |latitude| > 75°, land hexes must be tundra / snow / cold-band biomes
     (no jungle / savanna / plains). Uses a pole-to-pole world so this test
     isn't fooled by an asymmetric latitude window in the bundled config."""
-    from worldgen.climate import hex_latitude_deg
-    from worldgen.world import map_half_extents_km
+    from kartogen.climate import hex_latitude_deg
+    from kartogen.world import map_half_extents_km
     cfg = pole_to_pole_world.config
     _, half_h = map_half_extents_km(pole_to_pole_world.hexes.keys(), cfg.hex_size_km)
     for h, d in pole_to_pole_world.hexes.items():
@@ -78,9 +78,9 @@ def test_high_elevation_overrides_lowland_biome(medium_world: GeneratedWorld) ->
             )
 
 
-def test_whittaker_lookup_basic(default_worldgen_config: WorldgenConfig) -> None:
+def test_whittaker_lookup_basic(default_kartogen_config: KartogenConfig) -> None:
     """Spot-check Whittaker for known (T, P) combinations."""
-    cfg = default_worldgen_config
+    cfg = default_kartogen_config
     # Tropical wet → jungle
     assert biome_layer._whittaker(28.0, 2000.0, cfg) == "jungle"
     # Tropical dry → desert

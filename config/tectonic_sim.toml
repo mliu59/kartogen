@@ -1,7 +1,7 @@
 # =========================================================================
 # tectonic_sim — physics-only config for the rigid-polygon, cell-grid plate
-# tectonics simulation. Knows nothing about hex grids or climate. Worldgen
-# references this via `tectonic_sim_config` in worldgen.toml and passes in
+# tectonics simulation. Knows nothing about hex grids or climate. Kartogen
+# references this via `tectonic_sim_config` in kartogen.toml and passes in
 # the world rectangle; the domain is not configured here.
 # =========================================================================
 
