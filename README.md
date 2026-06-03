@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="icon.png" alt="kartogen" width="200">
+</p>
+
 # kartogen
 
 Deterministic, layered hex-grid world generator: from a `(config, seed)` pair it
