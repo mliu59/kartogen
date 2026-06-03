@@ -43,16 +43,12 @@ class _PlateSeed:
 
 
 def _plate_seed_min_separation_km(
-    domain: WorldRect, plate_count: int, hint_spacing_km: float) -> float:
-    """Derived minimum separation between plate seeds. Heuristic: scale
-    with ``min(w, h) / (sqrt(N) + 1)`` so plates spread out as N grows,
-    with a floor of ``2 * hint_spacing_km`` so adjacent plates don't
-    seed inside each other's Voronoi cells. ``hint_spacing_km`` is the
-    cell resolution (sim_config.particle_spacing_km — kept around as
-    a knob even though polygon_sim doesn't use particles)."""
-    base = min(domain.width_km, domain.height_km) / (math.sqrt(plate_count) + 1.0)
-    floor = 2.0 * hint_spacing_km
-    return max(base, floor)
+    domain: WorldRect, plate_count: int) -> float:
+    """Derived minimum separation between plate seeds: scale with
+    ``min(w, h) / (sqrt(N) + 1)`` so plates spread out as N grows. The
+    rejection sampler in ``_place_plate_seeds`` shrinks this geometrically
+    if it can't place all N seeds at the full separation."""
+    return min(domain.width_km, domain.height_km) / (math.sqrt(plate_count) + 1.0)
 
 
 def _place_plate_seeds(
@@ -68,8 +64,7 @@ def _place_plate_seeds(
 
     hw = domain.half_width_km
     hh = domain.half_height_km
-    min_sep = _plate_seed_min_separation_km(
-        domain, n, sim_config.particle_spacing_km)
+    min_sep = _plate_seed_min_separation_km(domain, n)
     bias = sim_config.seed_radial_bias
 
     pool_size = max(8 * n, 128)

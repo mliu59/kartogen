@@ -16,12 +16,8 @@ class HexData:
     elevation in this world (typically ~4.5 km in real-world calibration).
     Negative values are below sea level (ocean floor).
 
-    Plate fields (``plate_id``, ``plate_type``, ``nearest_boundary_type``,
-    ``distance_to_boundary_km``) are populated when ``mask_mode == "plates"``
-    and ``None`` otherwise. ``nearest_boundary_type`` is one of
-    ``"cc_convergent"``, ``"oc_convergent"``, ``"oo_convergent"``,
-    ``"divergent"``, ``"transform"`` — or ``None`` if no boundary within the
-    falloff radius.
+    ``plate_id`` is the id of the tectonic-sim plate owning this hex in the
+    final simulated state.
     """
 
     elevation: float
@@ -33,10 +29,7 @@ class HexData:
     precipitation_mm: float
     flow_accumulation: int  # upstream hex count, 1 = headwater
     biome: str
-    plate_id: int
-    plate_type: str
-    nearest_boundary_type: str | None  # None if no boundary within BFS range
-    distance_to_boundary_km: float
+    plate_id: int  # final tectonic-sim plate owning this hex
     # Lithosphere column produced by the dynamic tectonics simulation.
     # ``crust_type`` is "continental" or "oceanic"; ``crust_age_myr`` is time
     # since formation at a ridge (meaningful for oceanic crust — continental
@@ -56,39 +49,6 @@ class HexData:
     gyre_id: int | None
 
 
-@dataclass(frozen=True)
-class PlateConfig:
-    """Initial-condition parameters for the dynamic plate-tectonics simulator.
-
-    Used by ``generate_plates`` to set up the t=0 state — plate seed
-    placement, initial type assignment, motion vectors, and boundary-warp
-    geometry. The time-stepped tectonics simulation then evolves this state
-    over many Myr; per-hex topography emerges from accumulated convergence /
-    divergence rather than from a static distance-to-boundary look-up.
-    """
-
-    # Macro structure
-    count: int                              # number of plates
-    continental_fraction: float             # share of plates that are continental
-    min_separation_km: float                # rejection-sampling distance for seeds
-    # Plate seed positions can be biased toward the world center (>0) or pushed
-    # toward the edge (<0). 0 = uniform across all hexes.
-    seed_radial_bias: float
-
-    # Boundary geometry — irregular plate edges via warped Voronoi
-    boundary_warp_strength_km: float
-    boundary_warp_wavelength_km: float
-
-    # Motion. Each plate gets a random unit motion vector multiplied by this
-    # scalar (km/Myr) to produce its initial physical velocity for the sim.
-    motion_speed: float
-
-    # Dot-product of relative motion onto inter-plate normal must exceed this
-    # for the *initial* boundary classification (informational only — the
-    # simulation re-derives boundary type per-tick from live velocities).
-    convergence_threshold: float
-
-
 # TectonicsConfig used to be a worldgen-side dataclass that duplicated
 # the physics tunables from ``tectonic_sim.SimConfig``. Post-refactor,
 # the tectonic_sim module owns its own TOML (``config/tectonic_sim.toml``)
@@ -96,83 +56,6 @@ class PlateConfig:
 # name as a transparent alias so existing worldgen callsites that read
 # ``config.tectonics.X`` continue to work unchanged.
 from tectonic_sim.types import SimConfig as TectonicsConfig  # noqa: F401
-
-
-# --- Old TectonicsConfig field list, kept here as documentation. The
-# real source of truth is now ``tectonic_sim.types.SimConfig`` and the
-# TOML it loads from. Fields below are NOT used anymore — they're a
-# historical reference for the worldgen-side schema before the cutover.
-_LEGACY_DELETED_TECTONICS_CONFIG_NOTE = """
-class _OldTectonicsConfig:
-    # --- Sim duration ---
-    n_ticks: int                            # geological ticks to simulate
-    dt_myr: float                           # Myr per tick (typical: 1–5)
-
-    # --- Threshold ---
-    # Configurable sea-level threshold (km, signed elevation). Plate interaction
-    # logic consults this to decide ocean-floor vs land character of a column.
-    sea_level_km: float
-
-    # --- Plate motion ---
-    # Multiplier applied to each plate's unit motion vector to produce its
-    # physical velocity (km/Myr). Earth-like plates drift at ~30–100 km/Myr.
-    plate_speed_kmpy: float
-
-    # --- Initial crust thicknesses (km) ---
-    continental_thickness_km: float         # initial column thickness on continental plates
-    oceanic_thickness_km: float             # initial column thickness on oceanic plates
-    # When the simulation has to fill an empty world hex (a divergent gap
-    # between drifting plates), the type of crust spawned depends on the
-    # *nearest* plate's initial type:
-    #   • continental plate → thinned continental crust at this thickness,
-    #     producing a rift valley (Earth analogue: East African Rift / Dead
-    #     Sea). Defaults to ~28 km so isostasy yields ~−1 km elevation.
-    #   • oceanic plate → fresh oceanic crust at ``oceanic_thickness_km``.
-    # Without this branching, every gap became oceanic and an all-continental
-    # world would still be 50–70 % ocean.
-    rift_thickness_km: float
-
-    # --- Ocean floor depth (half-space cooling model) ---
-    # depth_below_sea_level = ridge_depth_km + ridge_subsidence_rate * sqrt(age)
-    # Earth: ridge_depth ≈ 2.5 km, rate ≈ 0.35 km/√Myr, max ≈ 6 km.
-    ridge_depth_km: float
-    ridge_subsidence_rate: float            # km per √Myr
-    max_ocean_depth_km: float               # cap on subsidence
-
-    # --- Continental isostasy ---
-    # elevation = (thickness - reference) * isostasy_factor
-    continental_reference_thickness_km: float
-    continental_isostasy_factor: float
-
-    # --- Collision response ---
-    # Per overlap event, the overriding plate's column gains this much thickness
-    # (orogeny). Higher = faster mountain building.
-    orogeny_uplift_per_overlap_km: float
-    # Fraction of the smaller continent's crust mass folded into the larger
-    # at each continental-collision tick (∈ [0, 1]; PlaTec default ~0.001).
-    folding_ratio: float
-    # Per-subduction-event thickening of the overriding plate (volcanic arc).
-    subduction_arc_uplift_km: float
-
-    # --- Erosion (placeholder blur, PlaTec-style) ---
-    erosion_period: int                     # apply every N ticks; 0 disables
-    erosion_strength: float                 # fraction blended with neighbor mean per pass
-
-    # --- Boundary-warp post-processing (breaks the integer-hex grid
-    # signature on continental↔oceanic boundaries left by rigid plate-stamp
-    # translation) ---
-    # Fraction of boundary hexes to consider flipping (per Perlin sample).
-    # 0 disables the warp entirely; ~0.35 produces visibly wavy coastlines
-    # without altering the macro-shape of continents.
-    boundary_warp_strength: float
-    # Perlin wavelength in km — how chunky the warp pattern is. 50–150 km
-    # gives bay-and-headland scale; >300 km looks like continent-edge
-    # bulges.
-    boundary_warp_wavelength_km: float
-
-    # --- Drift snapshots ---
-    snapshot_period_ticks: int
-"""
 
 
 @dataclass(frozen=True)
@@ -283,8 +166,6 @@ class WorldgenConfig:
     # is scaled by the complement so the two together stay in roughly
     # [-1, 1].
     tectonic_blend_weight: float
-    # Plate seed placement + initial type assignment.
-    plates: PlateConfig
     # Time-stepped tectonics simulation parameters.
     tectonics: TectonicsConfig
     # Ocean currents + continentality (Tier 2 climate enhancements).

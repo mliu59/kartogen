@@ -206,10 +206,7 @@ def test_randomize_sim_config_returns_valid_loaded_state(
     out = randomize_sim_config(default_sim_config, 1.0, seed=7)
     assert isinstance(out.plate_count, int)
     assert isinstance(out.continental_thickness_km, float)
-    # Polygon sim no longer carries particle-only derived properties
-    # (overlap_radius_km, intra_plate_min_distance_km, etc.). Just
-    # check the field types stay coherent.
-    assert isinstance(out.particle_spacing_km, float)
+    assert isinstance(out.motion_speed_kmpy, float)
 
 
 def test_randomize_sim_config_excluded_fields_pass_through(
@@ -240,7 +237,6 @@ def test_randomize_sim_config_respects_bounds_under_extreme_temperature(
         assert out.motion_speed_kmpy > 0
         assert out.continental_thickness_km > 0
         assert out.oceanic_thickness_km > 0
-        assert out.particle_spacing_km > 0
 
 
 def test_randomize_sim_config_actually_perturbs_each_field(

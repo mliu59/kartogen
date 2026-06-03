@@ -25,7 +25,6 @@ _REQUIRED_KEYS: tuple[str, ...] = (
     "continental_fraction",
     "motion_speed_kmpy",
     "seed_radial_bias",
-    "particle_spacing_km",
     "n_ticks",
     "dt_myr",
     "continental_thickness_km",
@@ -137,7 +136,6 @@ def load_sim_config(table: dict[str, object]) -> SimConfig:
         continental_fraction=float(table["continental_fraction"]),  # type: ignore[arg-type]
         motion_speed_kmpy=float(table["motion_speed_kmpy"]),  # type: ignore[arg-type]
         seed_radial_bias=float(table["seed_radial_bias"]),  # type: ignore[arg-type]
-        particle_spacing_km=float(table["particle_spacing_km"]),  # type: ignore[arg-type]
         n_ticks=int(table["n_ticks"]),  # type: ignore[arg-type]
         dt_myr=float(table["dt_myr"]),  # type: ignore[arg-type]
         continental_thickness_km=float(table["continental_thickness_km"]),  # type: ignore[arg-type]

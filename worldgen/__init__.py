@@ -2,7 +2,7 @@
 
 Each layer is a pure function of (prior_state, seeded_rng, config). Layers:
 
-    0. plates (optional)  — Voronoi plate field with motion + boundary tags
+    0. tectonics          — time-stepped rigid-polygon plate sim (tectonic_sim)
     1. elevation          — fBm + ridged + domain warp + radial falloff
     2. sea level          — quantile threshold, ocean / coast tagging
     3. temperature        — latitude gradient + elevation lapse

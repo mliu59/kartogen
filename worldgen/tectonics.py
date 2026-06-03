@@ -19,13 +19,15 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from worldgen.hex import Hex
-from worldgen.plates import (
-    PLATE_TYPE_CONTINENTAL,
-)
 from worldgen.types import TectonicsConfig
 
 if TYPE_CHECKING:
     from worldgen.rng import RngHierarchy
+
+# Crust-type tags carried on every ``LithosphereColumn`` (and the polygon
+# sim's per-cell crust). The strings are the canonical worldgen values.
+PLATE_TYPE_CONTINENTAL = "continental"
+PLATE_TYPE_OCEANIC = "oceanic"
 
 
 # --- Data structures -------------------------------------------------------
@@ -110,7 +112,6 @@ def column_to_elevation_km(col: LithosphereColumn, config: TectonicsConfig) -> f
 
 
 def simulate_tectonics(
-    initial,                            # type: ignore[no-untyped-def]
     world_hexes_iter: list[Hex],
     config: TectonicsConfig,
     hex_size_km: float,
@@ -122,10 +123,11 @@ def simulate_tectonics(
     """Run the tectonics simulation and return a ``LithosphereState``.
 
     Thin adaptor: delegates to
-    ``worldgen.tectonics_cast.simulate_tectonics_via_continuous_sim``.
-    ``world_shape`` is the simulation footprint; if ``None``, it's
-    derived from the world-hex set's bounding box. ``param_temperature``
-    > 0 randomizes the loaded ``SimConfig`` before the run.
+    ``worldgen.tectonics_cast.simulate_tectonics_via_continuous_sim``. The
+    polygon sim seeds its own plates from ``tectonic_sim.toml``.
+    ``world_shape`` is the simulation footprint; if ``None``, it's derived
+    from the world-hex set's bounding box. ``param_temperature`` > 0
+    randomizes the loaded ``SimConfig`` before the run.
 
     Pure function of all inputs.
     """

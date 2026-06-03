@@ -32,6 +32,8 @@ If a design choice trades against any of these three, flag it and ask before pro
 
 **Configuration over code.** Coefficients (noise frequencies, lapse rates, river thresholds, crop envelopes, deposit cluster parameters) live in TOML configs in `config`, not in code. The engine should be the same regardless of which world parameters are loaded.
 
+**Concise config comments.** TOML comments in `config/*.toml` stay terse: one short line per knob (purpose + units), plus a brief section header where it aids navigation. State a formula only when it's the clearest definition; drop analogies, real-world examples, tuning history ("was X → Y"), and multi-paragraph tutorials. The code is the place for mechanism detail — the config is a reference card, not documentation.
+
 **No backwards compatibility.** When changing a feature, *change it*. Don't add fallback paths, default values to paper over missing fields, optional flags toggling old vs new behavior, or compatibility shims. If old call sites break, fix them.
 
 **Explicit data structures.** All state objects are `@dataclass(frozen=True)` in `worldgen/types.py`. No bare dicts for anything with a stable schema. No default values on dataclass fields whose meaning is non-trivial — missing-data bugs should surface at construction, not as silent zeros downstream.
@@ -46,8 +48,7 @@ worldgen/
 ├── types.py           — WorldgenConfig + per-layer dataclasses + HexData
 ├── config_loader.py   — TOML → WorldgenConfig
 ├── pipeline.py        — orchestrator; returns GeneratedWorld
-├── plates.py          — L0a: t=0 plate seed placement + boundary classification
-├── tectonics.py       — L0b: per-hex result types + adaptor that delegates
+├── tectonics.py       — L0: per-hex result types + adaptor that delegates
 │                         to tectonics_cast
 ├── tectonics_cast.py  — Bridge: runs `tectonic_sim.polygon_sim`, samples
 │                         its final cell grid onto worldgen hexes
@@ -71,8 +72,8 @@ Layer order — each layer is a pure function of all earlier layers' outputs plu
 
 ```
 seed + config
-  ↓ L0a plates         Noise-applied weighted voronoi plate seeding
-  ↓ L0b tectonics      time-stepped sim (n_ticks × dt_myr of geological time)
+  ↓ L0  tectonics      time-stepped sim (n_ticks × dt_myr of geological time);
+                        the polygon sim seeds its own plates from tectonic_sim.toml
   ↓ L1  elevation      tectonic baseline (km) + fBm/ridged detail
   ↓ L2  sea level      ocean/coast mask (absolute sea_level_km)
   ↓ L2.5 ocean         gyre-based currents + continentality (Tier 2)

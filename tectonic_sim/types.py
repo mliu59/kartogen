@@ -114,10 +114,6 @@ class SimConfig:
     continental_fraction: float
     motion_speed_kmpy: float
     seed_radial_bias: float                       # 0 = uniform, >0 = centre, <0 = edge
-    # Minimum plate-seed separation hint. Kept under the legacy name
-    # for backward compatibility with the TOML; polygon_sim repurposes
-    # it as a "min plate-seed separation" floor.
-    particle_spacing_km: float
 
     # --- Sim duration ---
     n_ticks: int

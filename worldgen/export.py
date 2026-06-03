@@ -121,11 +121,6 @@ def serialize_world(world: GeneratedWorld) -> WorldSnapshot:
     layers: dict[str, dict[str, Any]] = {}
     if world.elevation is not None:
         layers["elevation"] = {"sea_level": world.elevation.sea_level}
-    if world.plates is not None:
-        layers["plates"] = {
-            "count": len(world.plates.plates),
-            "plates": [_to_primitive(p) for p in world.plates.plates],
-        }
 
     metadata: dict[str, Any] = {
         "schema_version": 1,
@@ -158,10 +153,9 @@ def load_snapshot(path: Path) -> WorldSnapshot:
     return WorldSnapshot.from_dict(json.loads(path.read_text(encoding="utf-8")))
 
 
-# Standard renderable layers (in order). The plate-ownership renders
-# (``plates`` / ``plates_t0``) are intentionally NOT exported as hex
-# layers — plate structure is inspected through the ``tectonic_sim_views``
-# (partition / crust / topography) instead.
+# Standard renderable layers (in order). Plate structure is inspected
+# through the ``tectonic_sim_views`` renders (partition / crust /
+# topography), not as a per-hex worldgen layer.
 DEFAULT_RENDER_LAYERS: tuple[str, ...] = (
     "elevation",
     "temperature",

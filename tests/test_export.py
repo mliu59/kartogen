@@ -45,8 +45,7 @@ def test_serialize_hex_records_include_coords_and_hexdata_fields(
     expected = {
         "elevation", "is_ocean", "is_coast", "is_lake", "is_river",
         "temperature_c", "precipitation_mm", "flow_accumulation", "biome",
-        "plate_id", "plate_type", "nearest_boundary_type",
-        "distance_to_boundary_km",
+        "plate_id",
     }
     assert expected.issubset(sample.keys())
 
@@ -60,15 +59,11 @@ def test_serialize_metadata_carries_run_params(small_world: GeneratedWorld) -> N
     assert "schema_version" in snap.metadata
 
 
-def test_serialize_layers_carry_sea_level_and_plates(
+def test_serialize_layers_carry_sea_level(
     small_world: GeneratedWorld,
 ) -> None:
     snap = serialize_world(small_world)
     assert snap.layers["elevation"]["sea_level"] == small_world.elevation.sea_level
-    # The default config uses mask_mode="plates", so plate metadata is present.
-    if small_world.plates is not None:
-        assert snap.layers["plates"]["count"] == len(small_world.plates.plates)
-        assert isinstance(snap.layers["plates"]["plates"], list)
 
 
 def test_serialize_is_pure(small_world: GeneratedWorld) -> None:

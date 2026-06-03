@@ -6,9 +6,6 @@ intermediate state on ``GeneratedWorld`` so partial pipelines (set via
 ``stop_after``) still produce the layers that can be made.
 
 Layers:
-    plates_t0       t=0 Voronoi assignment (per-hex initial plate id).
-    plates          Final post-warp plate ownership (per-hex final plate id,
-                    drift-translated seed dots).
     elevation       Heightmap, blue-low-to-white-high.
     temperature     Temperature, blue-cold-to-red-hot.
     precipitation   Precipitation, tan-dry-to-darkgreen-wet.
@@ -25,7 +22,6 @@ Layers:
 from __future__ import annotations
 
 import math
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PIL import Image, ImageDraw, ImageFont
@@ -42,8 +38,6 @@ if TYPE_CHECKING:
 # to filter the render set when the pipeline stopped early. Layers not in
 # this map are considered always-renderable (none currently).
 LAYER_REQUIRES: dict[str, str] = {
-    "plates_t0": "plates",
-    "plates": "tectonics",
     "elevation": "elevation",
     "ocean_depth": "sea",
     "currents": "ocean",
@@ -176,11 +170,10 @@ def _color_flow(flow: int, max_flow: int) -> tuple[int, int, int]:
     return (int(40 + 70 * x), int(60 + 140 * x), int(120 + 100 * x))
 
 
-# Distinct, perceptually-spaced colors for plate IDs. Chosen to read well on
-# the dark map background and to make adjacent plates easy to tell apart.
-# Plate IDs > len(palette) cycle through with a deterministic hue shift so
-# the same plate id always renders the same color across runs.
-_PLATE_PALETTE: tuple[tuple[int, int, int], ...] = (
+# Distinct, perceptually-spaced colors for categorical overlays (gyre ids).
+# Chosen to read well on the dark map background and to keep adjacent
+# categories easy to tell apart; ids beyond the palette length wrap.
+_CATEGORICAL_PALETTE: tuple[tuple[int, int, int], ...] = (
     (220,  90,  90),  # red
     ( 90, 160, 220),  # sky blue
     (220, 200,  90),  # gold
@@ -198,26 +191,6 @@ _PLATE_PALETTE: tuple[tuple[int, int, int], ...] = (
 )
 
 
-def _plate_color(
-    plate_id: int, is_oceanic: bool,
-) -> tuple[int, int, int]:
-    """Color for a plate. Oceanic plates are darkened + slightly blue-shifted
-    so the continental / oceanic distinction is visible at a glance."""
-    base = _PLATE_PALETTE[plate_id % len(_PLATE_PALETTE)]
-    # Deterministic shift per palette cycle so plates 0 and 14 don't collide.
-    cycle = plate_id // len(_PLATE_PALETTE)
-    shift = (cycle * 23) % 60  # within ±30 of base
-    r = max(0, min(255, base[0] + shift - 30))
-    g = max(0, min(255, base[1] - shift + 30))
-    b = max(0, min(255, base[2] + (shift // 2)))
-    if is_oceanic:
-        # Dim and pull toward blue.
-        r = int(r * 0.45)
-        g = int(g * 0.55)
-        b = int(b * 0.70 + 40)
-    return (r, g, b)
-
-
 def render(
     gen: GeneratedWorld,
     layer: str,
@@ -229,10 +202,6 @@ def render(
     img = Image.new("RGB", (w, h), color=(20, 20, 30))
     draw = ImageDraw.Draw(img)
 
-    if layer == "plates":
-        return _render_plates(gen, hex_px, show_legend)
-    if layer == "plates_t0":
-        return _render_plates_t0(gen, hex_px, show_legend)
     if layer == "currents":
         return _render_currents(gen, hex_px, show_legend)
     if layer == "wind":
@@ -317,183 +286,6 @@ def render(
     if show_legend:
         _draw_legend(draw, layer, w, h, gen)
 
-    return img
-
-
-def _render_plates(
-    gen: GeneratedWorld,
-    hex_px: float,
-    show_legend: bool,
-) -> Image.Image:
-    """Color each hex by its **final** (post-tectonic-simulation) plate id.
-
-    The colors come from the lithosphere state — i.e. which plate currently
-    owns each world hex after ``n_ticks × dt_myr`` of simulated drift. The
-    t=0 Voronoi seeding (which is what ``PlateField`` records) is **not**
-    what's drawn here; rendering the t=0 state would not match the elevation
-    field downstream of the tectonics simulation.
-
-    Boundary hexes (between two different final plates) get a darker outline.
-    Each plate's *current* seed-hex position (the initial seed translated by
-    the simulated drift) is marked with a small white dot.
-    """
-    w, h, cx, cy = _figure_size(gen, hex_px)
-    img = Image.new("RGB", (w, h), color=(20, 20, 30))
-    draw = ImageDraw.Draw(img)
-
-    if gen.lithosphere is None:
-        raise ValueError("plates layer requires tectonics step")
-    # Use the SIMULATED plates as source of truth — their ids match
-    # ``final_pid`` (both come from the same tectonic_sim run). After
-    # param-temperature randomization the simulated plate_count may
-    # differ from worldgen's t=0 ``PlateField``, so using
-    # ``gen.plates.plates`` would KeyError on extra ids.
-    plate_by_id = {p.id: p for p in gen.lithosphere.plates}
-    final_pid = gen.lithosphere.plate_id
-    world_hexes = _world_hexes(gen)
-    world_hex_set = set(world_hexes)
-
-    for hex in world_hexes:
-        px, py = _hex_to_pixel(hex.q, hex.r, hex_px, cx, cy)
-        corners = _hex_corners(px, py, hex_px)
-        pid = final_pid.get(hex, -1)
-        if pid < 0:
-            color = (20, 20, 30)
-        else:
-            plate = plate_by_id.get(pid)
-            # If the plate id was sampled from a particle that's since
-            # been subducted between the snapshot and the sample (very
-            # rare; defensive), fall back to continental colouring.
-            is_oceanic = plate is not None and plate.initial_type == "oceanic"
-            color = _plate_color(pid, is_oceanic)
-        # Boundary = any in-bounds neighbor has a different final pid.
-        on_boundary = any(
-            nb in world_hex_set and final_pid.get(nb, pid) != pid
-            for nb in hex.neighbors()
-        )
-        if on_boundary:
-            outline = (15, 15, 20)
-            width = max(1, int(hex_px / 6))
-        else:
-            outline = None  # type: ignore[assignment]
-            width = 0
-        draw.polygon(corners, fill=color, outline=outline, width=width)
-
-    # Mark each plate's **current** centre (km-coords drifted from the t=0
-    # seed hex over the geological simulation). Useful for confirming how
-    # far each plate has moved.
-    hex_size = gen.config.hex_size_km
-    for tplate in gen.lithosphere.plates:
-        px = cx + hex_px * tplate.center_km[0] / hex_size
-        py = cy + hex_px * tplate.center_km[1] / hex_size
-        r = max(2.0, hex_px * 0.35)
-        draw.ellipse(
-            [(px - r, py - r), (px + r, py + r)],
-            fill=(245, 245, 245), outline=(20, 20, 20),
-        )
-
-    if show_legend:
-        try:
-            font = ImageFont.truetype("arial.ttf", 11)
-        except OSError:
-            font = ImageFont.load_default()
-        # Iterate the simulated plate set — `TectonicPlate.initial_type`
-        # rather than worldgen `Plate.type`.
-        sim_plates = gen.lithosphere.plates
-        n_continental = sum(1 for p in sim_plates if p.initial_type == "continental")
-        n_oceanic = sum(1 for p in sim_plates if p.initial_type == "oceanic")
-        caption = (
-            f"plates (final state): {len(sim_plates)}   "
-            f"continental: {n_continental}   oceanic: {n_oceanic}   "
-            f"(white dots = current plate centres after drift)"
-        )
-        draw.text((10, 10), caption, fill=(230, 230, 230), font=font)
-
-        # Per-plate id swatches stacked along the bottom-left so the user can
-        # match the colors on the map to a numeric id.
-        swatch = 14
-        gap = 2
-        col_h = (swatch + gap) * len(sim_plates)
-        y0 = h - 10 - col_h
-        for i, plate in enumerate(sim_plates):
-            yy = y0 + i * (swatch + gap)
-            sw_color = _plate_color(plate.id, plate.initial_type == "oceanic")
-            draw.rectangle([10, yy, 10 + swatch, yy + swatch], fill=sw_color)
-            label = f"#{plate.id} {plate.initial_type[:4]}"
-            draw.text(
-                (10 + swatch + 4, yy - 1), label,
-                fill=(220, 220, 220), font=font,
-            )
-
-    return img
-
-
-def _render_plates_t0(
-    gen: GeneratedWorld,
-    hex_px: float,
-    show_legend: bool,
-) -> Image.Image:
-    """Color each hex by its **initial** (t=0 Voronoi) plate id.
-
-    The colors come from ``gen.plates.hex_to_plate`` — the Perlin-domain-warped
-    Voronoi assignment seeded before any tectonic drift. Useful as a
-    before/after pair with the final-state ``plates`` render: same seeds,
-    same warp field, but no drift, no collisions, no rift fill.
-    """
-    w, h, cx, cy = _figure_size(gen, hex_px)
-    img = Image.new("RGB", (w, h), color=(20, 20, 30))
-    draw = ImageDraw.Draw(img)
-
-    field = gen.plates
-    plate_by_id = {p.id: p for p in field.plates}
-    init_pid = field.hex_to_plate
-    world_hexes = _world_hexes(gen)
-    world_hex_set = set(world_hexes)
-
-    for hex in world_hexes:
-        px, py = _hex_to_pixel(hex.q, hex.r, hex_px, cx, cy)
-        corners = _hex_corners(px, py, hex_px)
-        pid = init_pid.get(hex, -1)
-        if pid < 0:
-            color = (20, 20, 30)
-        else:
-            plate = plate_by_id[pid]
-            color = _plate_color(pid, plate.type == "oceanic")
-        on_boundary = any(
-            nb in world_hex_set and init_pid.get(nb, pid) != pid
-            for nb in hex.neighbors()
-        )
-        if on_boundary:
-            outline = (15, 15, 20)
-            width = max(1, int(hex_px / 6))
-        else:
-            outline = None  # type: ignore[assignment]
-            width = 0
-        draw.polygon(corners, fill=color, outline=outline, width=width)
-
-    # Mark each plate's t=0 seed hex.
-    hex_size = gen.config.hex_size_km
-    for plate in field.plates:
-        sx, sy = _hex_to_pixel(plate.seed_hex.q, plate.seed_hex.r, hex_px, cx, cy)
-        r = max(2.0, hex_px * 0.35)
-        draw.ellipse(
-            [(sx - r, sy - r), (sx + r, sy + r)],
-            fill=(245, 245, 245), outline=(20, 20, 20),
-        )
-
-    if show_legend:
-        try:
-            font = ImageFont.truetype("arial.ttf", 11)
-        except OSError:
-            font = ImageFont.load_default()
-        n_continental = sum(1 for p in field.plates if p.type == "continental")
-        n_oceanic = sum(1 for p in field.plates if p.type == "oceanic")
-        caption = (
-            f"plates (t=0 Voronoi): {len(field.plates)}   "
-            f"continental: {n_continental}   oceanic: {n_oceanic}   "
-            f"(white dots = seed hexes)"
-        )
-        draw.text((10, 10), caption, fill=(230, 230, 230), font=font)
     return img
 
 
@@ -810,14 +602,14 @@ def _render_gyres(
     sea = gen.sea
     biomes = gen.biomes
 
-    # Reuse the plate palette; it's well-spaced and we typically have ≤10 gyres.
+    # Categorical palette; it's well-spaced and we typically have ≤10 gyres.
     for hex in _world_hexes(gen):
         px, py = _hex_to_pixel(hex.q, hex.r, hex_px, cx, cy)
         corners = _hex_corners(px, py, hex_px)
         is_ocean_hex = sea.is_ocean.get(hex, False)
         gyre_id = ocean.gyre_id.get(hex)
         if is_ocean_hex and gyre_id is not None:
-            color = _PLATE_PALETTE[gyre_id % len(_PLATE_PALETTE)]
+            color = _CATEGORICAL_PALETTE[gyre_id % len(_CATEGORICAL_PALETTE)]
         else:
             # Faded biome background (or neutral grey if biome step hasn't run).
             if biomes is not None:

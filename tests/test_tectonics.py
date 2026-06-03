@@ -8,11 +8,9 @@ from typing import cast
 
 import pytest
 from worldgen import generate
-from worldgen.plates import (
+from worldgen.tectonics import (
     PLATE_TYPE_CONTINENTAL,
     PLATE_TYPE_OCEANIC,
-)
-from worldgen.tectonics import (
     LithosphereColumn,
     LithosphereState,
     column_to_elevation_km,

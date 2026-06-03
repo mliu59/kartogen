@@ -14,7 +14,6 @@ from pathlib import Path
 from tectonic_sim.config_loader import load_sim_config_from_path
 from worldgen.types import (
     OceanConfig,
-    PlateConfig,
     WorldgenConfig,
     WorldShape,
 )
@@ -35,7 +34,8 @@ def load_worldgen_config(path: Path) -> WorldgenConfig:
         raw = tomllib.load(f)
     wg = raw["worldgen"]
     # Resolve relative path against the worldgen.toml file's directory.
-    tect_path_str = wg.get("tectonic_sim_config", "tectonic_sim.toml")
+    # Required — missing key raises rather than silently defaulting.
+    tect_path_str = wg["tectonic_sim_config"]  # type: ignore[index]
     tect_path = (path.parent / tect_path_str).resolve()
     sim_cfg = load_sim_config_from_path(tect_path)
     return parse_worldgen_config(wg, sim_config=sim_cfg)
@@ -48,10 +48,10 @@ def parse_worldgen_config(
 ) -> WorldgenConfig:
     """Parse a pre-loaded ``[worldgen]`` table into a ``WorldgenConfig``.
 
-    Reads ``[worldgen.elevation]`` (with a nested ``plates`` sub-table) plus
-    the ``[worldgen.{climate,hydrology,biome,ocean}]`` sections. Every
-    required field must be present — missing fields raise rather than
-    silently defaulting.
+    Reads ``[worldgen.elevation]`` plus the
+    ``[worldgen.{climate,hydrology,biome,ocean}]`` sections. Every required
+    field must be present — missing fields raise rather than silently
+    defaulting.
 
     ``sim_config`` is the already-loaded ``tectonic_sim.SimConfig`` — it
     becomes ``WorldgenConfig.tectonics``. The tectonic-physics fields no
@@ -63,15 +63,11 @@ def parse_worldgen_config(
     wg_hydro = wg["hydrology"]  # type: ignore[index]
     wg_biome = wg["biome"]  # type: ignore[index]
 
-    plates_cfg = _parse_plate_config(wg_elev)
     ocean_cfg = _parse_ocean_config(wg.get("ocean"))  # type: ignore[arg-type]
     world_cfg = _parse_world_shape(wg.get("world"))  # type: ignore[arg-type]
-    if (
-        plates_cfg is None or ocean_cfg is None or world_cfg is None
-    ):
+    if ocean_cfg is None or world_cfg is None:
         raise ValueError(
-            "WorldgenConfig requires [worldgen.world], "
-            "[worldgen.elevation.plates], and [worldgen.ocean] tables."
+            "WorldgenConfig requires [worldgen.world] and [worldgen.ocean] tables."
         )
 
     return WorldgenConfig(
@@ -91,7 +87,6 @@ def parse_worldgen_config(
         ridge_amplitude=wg_elev["ridge_amplitude"],
         ridge_threshold=wg_elev["ridge_threshold"],
         tectonic_blend_weight=wg_elev["tectonic_blend_weight"],
-        plates=plates_cfg,
         tectonics=sim_config,
         ocean=ocean_cfg,
         map_lat_min=float(wg_clim["map_lat_min"]),  # type: ignore[arg-type]
@@ -141,31 +136,6 @@ def _parse_world_shape(raw: dict[str, object] | None) -> WorldShape | None:
     return WorldShape(
         width_km=float(raw["width_km"]),  # type: ignore[arg-type]
         height_km=float(raw["height_km"]),  # type: ignore[arg-type]
-    )
-
-
-def _parse_plate_config(wg_elev: dict[str, object]) -> PlateConfig | None:
-    """Parse the ``plates`` sub-table of the elevation section.
-
-    Returns ``None`` when no ``[worldgen.elevation.plates]`` sub-table is
-    present; ``parse_worldgen_config`` then raises with a clear message.
-    """
-    raw = wg_elev.get("plates")
-    if raw is None:
-        return None
-    if not isinstance(raw, dict):
-        raise TypeError(
-            f"`plates` must be a TOML table, got {type(raw).__name__}"
-        )
-    return PlateConfig(
-        count=int(raw["count"]),  # type: ignore[arg-type]
-        continental_fraction=float(raw["continental_fraction"]),  # type: ignore[arg-type]
-        min_separation_km=float(raw["min_separation_km"]),  # type: ignore[arg-type]
-        seed_radial_bias=float(raw["seed_radial_bias"]),  # type: ignore[arg-type]
-        boundary_warp_strength_km=float(raw["boundary_warp_strength_km"]),  # type: ignore[arg-type]
-        boundary_warp_wavelength_km=float(raw["boundary_warp_wavelength_km"]),  # type: ignore[arg-type]
-        motion_speed=float(raw["motion_speed"]),  # type: ignore[arg-type]
-        convergence_threshold=float(raw["convergence_threshold"]),  # type: ignore[arg-type]
     )
 
 

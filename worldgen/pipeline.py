@@ -12,11 +12,9 @@ from worldgen import climate as climate_layer
 from worldgen import elevation as elevation_layer
 from worldgen import hydrology as hydrology_layer
 from worldgen import ocean as ocean_layer
-from worldgen import plates as plates_layer
 from worldgen import sea as sea_layer
 from worldgen import tectonics as tectonics_layer
 from worldgen.ocean import OceanLayer
-from worldgen.plates import PlateField
 from worldgen.tectonics import LithosphereState
 from worldgen.world import rect_world_hexes
 
@@ -35,7 +33,6 @@ from worldgen.types import (
 # any of these; the last entry (``"biome"``) is equivalent to running the full
 # pipeline.
 PIPELINE_STEPS: tuple[str, ...] = (
-    "plates",
     "tectonics",
     "elevation",
     "sea",
@@ -70,7 +67,6 @@ class GeneratedWorld:
     """
 
     config: WorldgenConfig
-    plates: PlateField
     lithosphere: LithosphereState | None
     elevation: ElevationLayer | None
     sea: SeaLayer | None
@@ -105,12 +101,6 @@ def generate(
         len(hexes), config.hex_size_km, seed, stop,
     )
 
-    # L0a — plates: t=0 plate seeds + initial Voronoi assignment.
-    with timed_layer("plates"):
-        plate_field = plates_layer.generate_plates(
-            hexes, config.plates, config.hex_size_km, rng,
-        )
-
     lithosphere: LithosphereState | None = None
     elev: ElevationLayer | None = None
     sea: SeaLayer | None = None
@@ -120,15 +110,16 @@ def generate(
     biomes: dict[Hex, str] | None = None
     hex_data: dict[Hex, HexData] | None = None
 
-    # L0b — tectonics: time-stepped simulation that evolves plates over
-    #       n_ticks × dt_myr of geological time.
+    # L0 — tectonics: time-stepped simulation that evolves plates over
+    #      n_ticks × dt_myr of geological time. The polygon sim seeds its
+    #      own plates from tectonic_sim.toml.
     if stop_ix >= _step_index("tectonics"):
         with timed_layer(
             f"tectonics ({config.tectonics.n_ticks} ticks "
             f"× {config.tectonics.dt_myr:g} Myr)"
         ):
             lithosphere = tectonics_layer.simulate_tectonics(
-                plate_field, hexes, config.tectonics, config.hex_size_km, rng,
+                hexes, config.tectonics, config.hex_size_km, rng,
                 world_shape=config.world,
                 param_temperature=config.param_temperature,
             )
@@ -173,7 +164,6 @@ def generate(
             and ocean is not None and clim is not None and hydro is not None
             and biomes is not None
         )
-        plate_type_lookup = {p.id: p.type for p in plate_field.plates}
         hex_data = {}
         for h in hexes:
             pid = lithosphere.plate_id[h]
@@ -188,13 +178,8 @@ def generate(
                 precipitation_mm=clim.precipitation_mm[h],
                 flow_accumulation=hydro.flow_accumulation[h],
                 biome=biomes[h],
+                # Plate id comes from the final tectonic-sim state.
                 plate_id=pid,
-                # Plate id comes from the *final* tectonic state; boundary
-                # classification is inherited from the t=0 PlateField snapshot
-                # (recomputing it from the simulated final state is a v2 task).
-                plate_type=plate_type_lookup.get(pid),
-                nearest_boundary_type=plate_field.boundary_type[h],
-                distance_to_boundary_km=plate_field.distance_to_boundary_km[h],
                 crust_thickness_km=col.thickness_km,
                 crust_type=col.crust_type,
                 crust_age_myr=col.age_myr,
@@ -206,7 +191,6 @@ def generate(
 
     return GeneratedWorld(
         config=config,
-        plates=plate_field,
         lithosphere=lithosphere,
         elevation=elev,
         sea=sea,

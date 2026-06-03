@@ -187,9 +187,6 @@ _SIM_CONFIG_RANDOMIZERS: tuple[FieldRandomizer, ...] = (
     FieldRandomizer("seed_radial_bias",
                     std=0.3, hard_min=-1.0, hard_max=1.0),
 
-    # --- Initial particle layout ---
-    FieldRandomizer("particle_spacing_km", std=3.0, hard_min=1.0),
-
     # --- Crust thicknesses ---
     FieldRandomizer("continental_thickness_km", std=6.0, hard_min=1.0),
     FieldRandomizer("oceanic_thickness_km", std=1.5, hard_min=1.0),

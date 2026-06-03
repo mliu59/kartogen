@@ -46,7 +46,6 @@ def test_default_config_loads_from_disk(default_sim_config: SimConfig) -> None:
     # Spot-check a few fields rather than enumerating all of them — the
     # loader's required-keys check covers the rest at construction time.
     assert cfg.plate_count > 0
-    assert cfg.particle_spacing_km > 0
     assert cfg.n_ticks > 0
     assert cfg.snapshot_period_ticks >= 0
 

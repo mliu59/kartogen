@@ -50,8 +50,7 @@ def hex_to_xy_km(h: Hex, hex_size_km: float) -> tuple[float, float]:
     """Flat-top hex axial coord → cartesian pixel centre in km.
 
     Canonical projection used everywhere worldgen converts a ``Hex`` to
-    physical (x, y) km. Mirrors ``plates._hex_to_xy`` (unitless) ×
-    ``hex_size_km``.
+    physical (x, y) km.
     """
     return 1.5 * h.q * hex_size_km, _SQRT3 * (h.r + h.q / 2.0) * hex_size_km
 
@@ -100,26 +99,3 @@ def world_pixel_bounds(
     w = int(round(shape.width_km * px_per_km + 4 * hex_px))
     h = int(round(shape.height_km * px_per_km + 4 * hex_px))
     return w, h
-
-
-def normalized_radial_position(
-    h: Hex,
-    half_width_km: float,
-    half_height_km: float,
-    hex_size_km: float,
-) -> float:
-    """0 at world centre, 1 at the closest edge.
-
-    Distance to nearest edge in pixel-km, divided by the smaller of the
-    two half-extents (i.e. by the largest possible centre-to-edge
-    distance, which is what defines "the centre" being maximally
-    interior). Plates' seed radial bias multiplies this into a sort key.
-    Symmetric in x and y so a bias toward centre / edge works the same
-    on a wide-short world as on a tall-thin one.
-    """
-    d_max = min(half_width_km, half_height_km)
-    if d_max <= 0:
-        return 0.0
-    px, py = hex_to_xy_km(h, hex_size_km)
-    d = min(half_width_km - abs(px), half_height_km - abs(py))
-    return max(0.0, min(1.0, 1.0 - d / d_max))

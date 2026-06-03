@@ -1,49 +1,29 @@
 # =========================================================================
-# Worldgen parameters — terrain generation pipeline.
-#
-# Tuning surface for the world-generation pipeline (elevation, climate,
-# hydrology, biome thresholds).
-#
-# Layered pipeline (each layer is a pure function of earlier layers' outputs
-# plus a seeded child-RNG keyed by the layer name — adding a new layer or
-# entry does not reshuffle existing seeds):
-#   L1 elevation → L2 sea → L3 climate → L4 precip → L5 hydrology → L6 biome
-#
-# Physical-unit scaling: scale-dependent parameters are stored in physical
-# units (km, km², mm) and converted via `hex_size_km` — the same physical
-# world looks identical at any chosen hex resolution.
+# Worldgen pipeline parameters (elevation, climate, hydrology, biome).
+# Each layer is a pure function of earlier outputs + a seeded child-RNG
+# keyed by layer name. Scale-dependent values are in physical units
+# (km, km², mm) and converted via hex_size_km, so a world looks identical
+# at any hex resolution.
+# Pipeline: L1 elevation → L2 sea → L3 climate → L4 precip → L5 hydrology → L6 biome
 # =========================================================================
 
 [worldgen]
-# Each hex represents a piece of land of this physical size.
-# Scale-dependent parameters below (wavelengths, ocean pickup, river
-# threshold, etc.) are given in physical units and converted to hex units
-# at runtime — so changing hex_size_km automatically rescales noise
-# frequencies, river thresholds, wind reach, and precipitation rates.
-# Generated worlds will look the same at any chosen resolution.
-hex_size_km = 5.0
+hex_size_km = 5.0                    # physical size per hex; rescales all physical-unit knobs
 
-# Path (relative to this file's directory) to the standalone
-# tectonic_sim configuration. The tectonics simulator is configured
-# entirely from that file — worldgen.toml no longer duplicates its
-# fields. Any change to tectonic physics goes in tectonic_sim.toml.
+# Path (relative to this file) to the standalone tectonic_sim config —
+# the sole source of tectonic-physics tunables.
 tectonic_sim_config = "tectonic_sim.toml"
 
 [worldgen.world]
-# Rectangular map footprint in km. The world hex set is every hex whose
-# flat-top pixel centre falls in the rectangle [-W/2, W/2] × [-H/2, H/2].
-# Width is the east-west extent (latitude is unchanged across it);
-# height is the north-south extent (latitude varies across it; see
-# [worldgen.climate] map_lat_min / map_lat_max).
-width_km = 1000.0
-height_km = 1000.0
+# Rectangular map footprint (km). Hex set = every flat-top hex centre in
+# [-W/2, W/2] × [-H/2, H/2]. Width = E-W (constant latitude); height = N-S
+# (latitude varies; see climate map_lat_min/max).
+width_km = 2500.0
+height_km = 2500.0
 
 # =========================================================================
-# Elevation-layer parameters. The macro structure comes from the
-# time-stepped tectonics simulation seeded by the [worldgen.elevation.plates]
-# table; fBm/ridged noise contributes small-scale detail blended in at
-# `tectonic_blend_weight`. (The preset system that used to live here is
-# disabled — only this single configuration is supported for now.)
+# Elevation. Macro structure comes from the tectonics sim (tectonic_sim.toml);
+# fBm/ridged noise adds detail blended at tectonic_blend_weight.
 # =========================================================================
 
 [worldgen.elevation]
@@ -56,129 +36,76 @@ warp_wavelength_km = 333.0
 ridge_octaves = 5
 ridge_amplitude = 0.70
 ridge_threshold = 0.10
-tectonic_blend_weight = 1.0
-
-[worldgen.elevation.plates]
-# Continent-spanning world: every plate seeded as continental so the
-# baseline never drops to deep oceanic. Interior oceans / seas instead
-# emerge from rift fill + low continental basins — those feed the
-# prevailing-wind moisture sweep, without which continental interiors
-# bottom out at the precipitation floor.
-count = 4
-continental_fraction = 1.0          # everything is continental → no ocean baseline
-min_separation_km = 700.0
-seed_radial_bias = 0.0
-boundary_warp_strength_km = 70.0
-boundary_warp_wavelength_km = 320.0
-motion_speed = 1.0
-convergence_threshold = 0.10
+tectonic_blend_weight = 1.0          # 1 = pure tectonics, 0 = pure noise
 
 [worldgen.climate]
-# Latitude window the map covers. The pixel-y axis maps to a slice of
-# latitude: y = -height/2 (north edge) → map_lat_max, y = +height/2
-# (south edge) → map_lat_min. This is independent of width_km and
-# hex_size_km — you can simulate a 1000-km-wide map spanning 1° or 60° of
-# latitude alike. Defaults (-90, 90) reproduce the pole-to-pole gradient.
-# For a mid-latitude slice (e.g., a Europe-shaped continent) try
-# map_lat_min = 30, map_lat_max = 60.
+# Latitude window the map's N-S axis covers: y=-H/2 (north) → map_lat_max,
+# y=+H/2 (south) → map_lat_min. Independent of width/hex_size. (-90, 90) =
+# pole-to-pole.
 map_lat_min = -30.0
 map_lat_max = 60.0
 
-# Planet-wide climate anchors: equator_temp_c is the temperature at lat 0°,
-# polar_temp_c at ±90°. The map samples a slice of this gradient via the
-# lat window above. lapse rate is then applied per km of elevation.
+# Planet climate anchors (°C at lat 0° and ±90°); map samples a slice via the
+# lat window. Lapse applied per km of elevation.
 equator_temp_c = 28.0
 polar_temp_c = -22.0
 lapse_rate_c_per_km = 6.5
-max_elevation_km = 4.5             # elevation=1.0 corresponds to this many km above sea level
-temp_noise_amplitude = 1.5         # small regional variation, °C
+max_elevation_km = 4.5               # km above sea level at elevation = 1.0
+temp_noise_amplitude = 1.5           # regional variation, °C
 
-# Precipitation pipeline: prevailing winds sweep moisture from upwind ocean
-# to land, losing moisture per km of land fetch and depositing extra on
-# uphill (orographic uplift).
-precip_base = 1600.0               # mm/year (baseline floor over land = 0.10 * this)
-precip_pickup_per_ocean_km = 120.0 # mm of moisture absorbed per km of warm ocean fetch
-precip_loss_per_km = 0.015         # fractional deposition rate per km of land traversal — e-folding distance ~65 km of land (was 0.066 → 15 km, which dried continental interiors below realistic ~400–600 mm)
-precip_orographic_coef = 3500.0    # mm per unit dh/dx uphill
+# Precipitation: prevailing winds carry ocean moisture onto land, losing it
+# per km of land fetch and depositing extra uphill (orographic).
+precip_base = 1600.0                 # mm/yr (land floor = 0.10 × this)
+precip_pickup_per_ocean_km = 120.0   # mm absorbed per km of warm-ocean fetch
+precip_loss_per_km = 0.015           # fractional deposition per km land (~65 km e-folding)
+precip_orographic_coef = 3500.0      # mm per unit uphill dh/dx
 precip_noise_amplitude = 180.0
-wind_reach_km = 1000.0             # cap on upwind path length integrated per hex
-# Wind pattern: 3 latitude bands per hemisphere (trade easterlies → westerlies
-# → polar easterlies). Direction is now continuous in cartesian space and
-# perturbed per-hex; the three bands set the *base* direction only.
+wind_reach_km = 1000.0               # cap on upwind path length per hex
 
-# --- Per-hex deviations from pure zonal flow (annual mean) ---
-# Perlin jitter — spatially-coherent random perturbation of wind direction
-# so moisture paths aren't perfect horizontal stripes. 15° matches the
-# typical envelope of synoptic-scale storm-track meanders.
+# --- Per-hex deviations from zonal flow (annual mean) ---
+# Perlin jitter so moisture paths aren't perfect stripes (~15° = synoptic meander).
 wind_jitter_amplitude_deg = 15.0
 wind_jitter_wavelength_km = 600.0
-# Sea breeze — annual-mean onshore wind near coasts, decays linearly with
-# distance to the nearest sea. Strength 0..1 weights the onshore component
-# against the zonal component before renormalisation.
+# Sea breeze: annual-mean onshore wind near coasts, decaying inland. Strength 0..1.
 sea_breeze_strength = 0.6
 sea_breeze_reach_km = 200.0
-# Multi-path sampling — per target hex, average the moisture sweep over N
-# directions spread evenly across ±spread degrees around the base wind.
-# Captures the variability that real climates have ("the wind isn't always
-# exactly from that direction") without simulating individual storm tracks.
+# Multi-path sampling: average the sweep over N directions across ±spread°.
 wind_path_samples = 5
 wind_path_spread_deg = 25.0
-# Spatial smoothing of the final precipitation field. Each pass averages
-# each land hex with its land neighbors (1/7 weight each, self + 6
-# neighbors). 0 = off; 2 cleans up hex-scale granularity without
-# washing out the rain-shadow / orographic signal.
-precip_smoothing_passes = 2
+precip_smoothing_passes = 2          # final-field smoothing (self + 6 land neighbours); 0 = off
 
 [worldgen.hydrology]
-# Sink-fill + D6 flow accumulation. Rivers carve where accumulated drainage
-# exceeds the threshold. Lakes form where sinks were filled.
-river_drainage_threshold_km2 = 1300.0  # min upstream drainage area to mark as river
-lake_min_depth = 0.03                  # min fill depth to be a lake (else marsh)
-river_carve_amount = 0.04              # how much rivers lower elevation visually
+# Sink-fill + D6 flow accumulation. Rivers where drainage exceeds threshold;
+# lakes where sinks were filled.
+river_drainage_threshold_km2 = 1300.0
+lake_min_depth = 0.03                # min fill depth for lake (else marsh)
+river_carve_amount = 0.04            # visual elevation lowering along rivers
 
 [worldgen.biome]
-# Whittaker classification rules at sea-level temperature.
-# Elevation overrides apply above the thresholds below.
-elevation_hills_threshold = 0.78     # base-elev quantile above which a tile becomes hills
+# Whittaker classification at sea-level temperature; elevation overrides above.
+elevation_hills_threshold = 0.78     # base-elev quantile → hills
 elevation_mountain_threshold = 0.90
 elevation_snow_threshold = 0.94
-# Temperature thresholds (°C) for biome bands:
+# Temperature bands (°C):
 tundra_max_temp_c = -2.0
 taiga_max_temp_c = 8.0
 temperate_max_temp_c = 22.0
-# Precipitation thresholds (mm/yr) — used together with temperature to assign biome:
+# Precipitation bands (mm/yr):
 desert_max_precip = 200.0
 grassland_max_precip = 600.0
 forest_max_precip = 1200.0
-# Threshold below which a cool-band hex is tundra rather than taiga (separate
-# from desert_max_precip so cool zones can be sparsely wooded at modest precip):
-cool_band_dry_threshold = 150.0
-# Above forest_max_precip → jungle (in warm zones) or temperate_forest (in cool zones)
-
+cool_band_dry_threshold = 150.0      # cool-band tundra vs taiga cutoff
+# Above forest_max_precip → jungle (warm) or temperate_forest (cool).
 
 [worldgen.ocean]
-# Ocean currents (Tier 2 climate): each connected ocean basin is split by
-# hemisphere into one or two gyres, each rotating clockwise in the northern
-# hemisphere and counter-clockwise in the southern (Coriolis-driven). Per
-# ocean hex, the current direction is the tangent around the gyre centre;
-# the temperature anomaly is the planet's latitudinal temperature at the
-# point ``current_persistence_km`` upstream, minus the local lat temperature,
-# scaled by ``current_anomaly_strength``. This single-pass formula gives
-# warm western-boundary currents (Gulf Stream, Kuroshio) and cold eastern-
-# boundary currents (California, Humboldt, Canary).
-#
-# Coastal land hexes inherit a fraction of the adjacent ocean's anomaly,
-# decaying with distance inland. Continentality scales the precipitation
-# floor by exp(-distance_to_ocean_km / continentality_dry_scale_km), drying
-# deep continental interiors.
-#
-# Annual-mean snapshot — no seasonality.
-
-current_persistence_km = 2000.0         # ~Gulf Stream traversal distance
-current_anomaly_strength = 0.5          # 0..1; fraction of source-temp anomaly
-max_current_anomaly_c = 8.0             # cap on |anomaly|, °C
-
-coastal_pickup_fraction = 0.6           # at the coast itself, 0..1
-coastal_decay_km = 300.0                # e-folding distance into the interior
-
-continentality_dry_scale_km = 1500.0    # ~37% of precip floor at 1500 km inland
+# Ocean currents (Tier 2): each basin split by hemisphere into gyres (CW north,
+# CCW south). Per ocean hex, direction = gyre tangent; temp anomaly = upstream
+# lat-temp minus local, scaled — yields warm western / cold eastern boundary
+# currents. Coastal land inherits a decaying fraction; continentality dries
+# deep interiors. Annual-mean, no seasonality.
+current_persistence_km = 2000.0      # upstream sampling distance
+current_anomaly_strength = 0.5       # 0..1 fraction of source anomaly
+max_current_anomaly_c = 8.0          # cap on |anomaly|, °C
+coastal_pickup_fraction = 0.6        # anomaly fraction at the coast, 0..1
+coastal_decay_km = 300.0             # e-folding distance inland
+continentality_dry_scale_km = 1500.0 # ~37% of precip floor at this distance inland
